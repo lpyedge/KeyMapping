@@ -1,0 +1,58 @@
+# Built objects
+bin/
+gen/
+obj/
+out/
+build/
+app/build/
+
+# Gradle
+.gradle/
+local.properties
+
+# IntelliJ/Android Studio
+.idea/
+*.iml
+*.iws
+*.ipr
+.idea/caches/
+.idea/libraries/
+.idea/modules.xml
+.idea/workspace.xml
+.idea/navEditor.xml
+.idea/assetWizardSettings.xml
+
+# VS Code
+.vscode/
+
+# System files
+.DS_Store
+Thumbs.db
+
+# Log files
+*.log
+
+# Android-specific
+captures/
+.externalNativeBuild/
+.cxx/
+bitmaps/
+caches/
+captures/
+
+# APKs and AARs
+*.apk
+*.aar
+app-release-unsigned.apk
+app-debug-unsigned.apk
+
+# Keystores
+*.jks
+*.keystore
+!debug.keystore
+
+# Crashlytics
+com_crashlytics_export_strings.xml
+crashlytics.properties
+crashlytics-build.properties
+fabric.properties

@@ -1,0 +1,75 @@
+plugins {
+    id 'com.android.application'
+    id 'kotlin-android'
+}
+
+android {
+    namespace 'com.keymapping.powerkeyrules'
+    compileSdk 34
+
+    defaultConfig {
+        applicationId 'com.keymapping.powerkeyrules'
+        minSdk 26
+        targetSdk 34
+        versionCode 1
+        versionName '1.0'
+    }
+
+    signingConfigs {
+        release {
+            // 預設使用 debug 簽名，確保 GitHub Action 能生成已簽名的 APK (app-release.apk)
+            // 如果需要正式簽名，請配置環境變數或 keystore.properties
+            storeFile file(System.getenv("KEYSTORE_FILE") ?: "debug.keystore")
+            storePassword System.getenv("KEYSTORE_PASSWORD") ?: "android"
+            keyAlias System.getenv("KEY_ALIAS") ?: "androiddebugkey"
+            keyPassword System.getenv("KEY_PASSWORD") ?: "android"
+            // 如果找不到 debug.keystore，Android Gradle Plugin 會自動生成一個
+            if (!storeFile.exists()) {
+                 storeFile = file("${System.getProperty('user.home')}/.android/debug.keystore")
+            }
+        }
+    }
+
+    buildTypes {
+        release {
+            signingConfig signingConfigs.release
+            minifyEnabled false
+            proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+        }
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    kotlinOptions {
+        jvmTarget = '17'
+    }
+
+    packaging {
+        resources {
+            excludes += ['META-INF/AL2.0', 'META-INF/LGPL2.1']
+        }
+    }
+
+    lintOptions {
+        abortOnError false
+    }
+}
+
+dependencies {
+    compileOnly 'de.robv.android.xposed:api:82'
+    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
+}
+
+// Ensure app/src/main/assets/webui is always in sync with root webui/ directory
+task syncWebUiAssets(type: Copy) {
+    description = 'Syncs webui assets from project root to app assets folder'
+    from '../webui'
+    into 'src/main/assets/webui'
+    // Exclude source-only files if needed, but README.md is fine
+}
+
+// Hook into preBuild
+preBuild.dependsOn syncWebUiAssets

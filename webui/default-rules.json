@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "doublePressIntervalMs": 300,
+  "longPressMinMs": 500,
+  "rules": [
+    {
+      "keyCode": 26,
+      "behavior": "LONG_PRESS",
+      "durationMs": 500,
+      "action": {
+        "type": "launch_intent",
+        "intent": {
+          "action": "android.intent.action.VOICE_ASSIST"
+        }
+      }
+    },
+    {
+      "keyCode": 26,
+      "behavior": "DOUBLE_PRESS",
+      "durationMs": 0,
+      "action": {
+        "type": "send_key",
+        "keyCode": 27
+      }
+    }
+  ]
+}
