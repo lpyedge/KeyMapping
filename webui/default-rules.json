@@ -16,11 +16,48 @@
     },
     {
       "keyCode": 26,
+      "behavior": "LONG_PRESS",
+      "durationMs": 2000,
+      "action": {
+        "type": "run_shell",
+        "command": "input keyevent 26"
+      }
+    },
+    {
+      "keyCode": 26,
+      "behavior": "LONG_PRESS_RELEASE",
+      "durationMs": 2000,
+      "action": {
+        "type": "run_shell",
+        "command": "am broadcast -a android.intent.action.SHOW_BRIGHTNESS_DIALOG"
+      }
+    },
+    {
+      "keyCode": 26,
       "behavior": "DOUBLE_PRESS",
       "durationMs": 0,
       "action": {
         "type": "send_key",
         "keyCode": 27
+      }
+    },
+    {
+      "keyCode": 26,
+      "behavior": "COMBO_DOWN",
+      "comboKeyCode": 24,
+      "action": {
+        "type": "run_shell",
+        "command": "input keyevent 120"
+      }
+    },
+    {
+      "keyCode": 24,
+      "behavior": "COMBO_LONG_PRESS",
+      "comboKeyCode": 25,
+      "durationMs": 1000,
+      "action": {
+        "type": "run_shell",
+        "command": "cmd audio set-ringer-mode silent"
       }
     }
   ]

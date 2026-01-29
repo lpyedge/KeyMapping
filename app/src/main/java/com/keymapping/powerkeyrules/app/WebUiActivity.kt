@@ -29,8 +29,9 @@ class WebUiActivity : Activity() {
             domStorageEnabled = true
             cacheMode = WebSettings.LOAD_NO_CACHE
             allowFileAccess = true
-            allowFileAccessFromFileURLs = true
-            allowUniversalAccessFromFileURLs = true
+            // 安全性：禁用跨域文件訪問，防止遠程 JS 調用原生接口
+            allowFileAccessFromFileURLs = false
+            allowUniversalAccessFromFileURLs = false
         }
         webView.webChromeClient = WebChromeClient()
         webView.addJavascriptInterface(AndroidBridge(), "PowerKeyRulesAndroid")
@@ -98,33 +99,61 @@ class WebUiActivity : Activity() {
 
         private fun testRunShell(command: String): String {
             if (command.isBlank()) return "錯誤：命令不能為空"
+            val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
             return try {
-                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
-                val exitCode = process.waitFor()
-                val output = process.inputStream.bufferedReader().readText().take(500)
-                val error = process.errorStream.bufferedReader().readText().take(200)
-                buildString {
-                    append("✅ 執行完成 (exit=$exitCode)")
-                    if (output.isNotBlank()) append("\n輸出：$output")
-                    if (error.isNotBlank()) append("\n錯誤：$error")
+                // 使用 Future 避免主線程阻塞，添加 3 秒超時
+                val future = executor.submit<String> {
+                    val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", command))
+                    val completed = process.waitFor(3, java.util.concurrent.TimeUnit.SECONDS)
+                    if (!completed) {
+                        process.destroy()
+                        return@submit "⚠️ 執行超時（3秒）"
+                    }
+                    val exitCode = process.exitValue()
+                    val output = process.inputStream.bufferedReader().readText().take(500)
+                    val error = process.errorStream.bufferedReader().readText().take(200)
+                    buildString {
+                        append("✅ 執行完成 (exit=$exitCode)")
+                        if (output.isNotBlank()) append("\n輸出：$output")
+                        if (error.isNotBlank()) append("\n錯誤：$error")
+                    }
                 }
+                future.get(4, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                "⚠️ 整體超時（4秒）"
             } catch (t: Throwable) {
                 "❌ 執行失敗：${t.message}"
+            } finally {
+                executor.shutdownNow()
             }
         }
 
         private fun testSendKey(keyCode: Int): String {
             if (keyCode < 0) return "錯誤：無效的 keyCode"
+            val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
             return try {
-                val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "input keyevent $keyCode"))
-                val exitCode = process.waitFor()
-                if (exitCode == 0) {
-                    "✅ 已發送 keyCode=$keyCode"
-                } else {
-                    "⚠️ 執行完成但 exit=$exitCode（可能需要 Root 權限）"
+                // 使用 Future 避免主線程阻塞，添加 2 秒超時
+                val future = executor.submit<String> {
+                    val process = Runtime.getRuntime().exec(arrayOf("sh", "-c", "input keyevent $keyCode"))
+                    val completed = process.waitFor(2, java.util.concurrent.TimeUnit.SECONDS)
+                    if (!completed) {
+                        process.destroy()
+                        return@submit "⚠️ 執行超時（2秒）"
+                    }
+                    val exitCode = process.exitValue()
+                    if (exitCode == 0) {
+                        "✅ 已發送 keyCode=$keyCode"
+                    } else {
+                        "⚠️ 執行完成但 exit=$exitCode（可能需要 Root 權限）"
+                    }
                 }
+                future.get(3, java.util.concurrent.TimeUnit.SECONDS)
+            } catch (e: java.util.concurrent.TimeoutException) {
+                "⚠️ 整體超時（3秒）"
             } catch (t: Throwable) {
                 "❌ 發送失敗：${t.message}"
+            } finally {
+                executor.shutdownNow()
             }
         }
 

@@ -22,6 +22,8 @@ const fieldIntentEl = document.getElementById("fieldIntent");
 const formErrorEl = document.getElementById("formError");
 const doubleIntervalEl = document.getElementById("doubleInterval");
 const longPressMinEl = document.getElementById("longPressMin");
+const comboKeySelectEl = document.getElementById("comboKeySelect");
+const labelComboKeyEl = document.getElementById("labelComboKey");
 
 const KEY_OPTIONS = [
   { label: "电源键 (POWER)", code: 26 },
@@ -104,23 +106,28 @@ function normalizeRule(r) {
   const keyCode = Number(r.keyCode);
   if (!Number.isInteger(keyCode) || keyCode < 0) return null;
   const behavior = String(r.behavior || "").toUpperCase();
-  if (!["DOWN", "UP", "LONG_PRESS", "DOUBLE_PRESS"].includes(behavior)) return null;
+  if (!["DOWN", "UP", "LONG_PRESS", "LONG_PRESS_RELEASE", "DOUBLE_PRESS", "COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior)) return null;
   const durationMs = Number(r.durationMs) || 0;
+  const comboKeyCode = Number(r.comboKeyCode) || 0;
   const action = r.action || {};
   const type = String(action.type || "");
+  
+  // 基础规则对象
+  const baseRule = { keyCode, behavior, durationMs, comboKeyCode };
+  
   if (type === "run_shell") {
     if (!action.command) return null;
-    return { keyCode, behavior, durationMs, action: { type: "run_shell", command: String(action.command) } };
+    return { ...baseRule, action: { type: "run_shell", command: String(action.command) } };
   }
   if (type === "send_key") {
     const sendKey = Number(action.keyCode);
     if (!Number.isInteger(sendKey) || sendKey < 0) return null;
-    return { keyCode, behavior, durationMs, action: { type: "send_key", keyCode: sendKey } };
+    return { ...baseRule, action: { type: "send_key", keyCode: sendKey } };
   }
   if (type === "launch_intent") {
     const intent = action.intent || {};
     if (typeof intent !== "object" || intent == null) return null;
-    return { keyCode, behavior, durationMs, action: { type: "launch_intent", intent } };
+    return { ...baseRule, action: { type: "launch_intent", intent } };
   }
   return null;
 }
@@ -128,6 +135,7 @@ function normalizeRule(r) {
 function render() {
   renderConfigFields();
   renderKeyOptions();
+  renderComboKeyOptions();
   renderRules();
   resetForm();
 }
@@ -139,6 +147,17 @@ function renderKeyOptions() {
     option.value = opt.code;
     option.textContent = opt.label;
     keySelectEl.appendChild(option);
+  });
+}
+
+function renderComboKeyOptions() {
+  comboKeySelectEl.innerHTML = "";
+  // 组合键不包含"其它/自定义"选项
+  KEY_OPTIONS.filter(opt => opt.code !== "custom").forEach((opt) => {
+    const option = document.createElement("option");
+    option.value = opt.code;
+    option.textContent = opt.label;
+    comboKeySelectEl.appendChild(option);
   });
 }
 
@@ -159,13 +178,25 @@ function renderRules() {
   config.rules.forEach((rule, index) => {
     const item = document.createElement("div");
     item.className = "rule-item";
+    
+    // 构建标题
+    let title = `按键 ${rule.keyCode}`;
+    if (rule.comboKeyCode > 0) {
+      title += ` + ${rule.comboKeyCode}`;
+    }
+    title += ` · ${labelBehavior(rule.behavior)}`;
+    
+    // 构建元信息
+    let meta = "";
+    if (["LONG_PRESS", "LONG_PRESS_RELEASE", "COMBO_LONG_PRESS"].includes(rule.behavior)) {
+      meta += `长按 ≥ ${rule.durationMs}ms · `;
+    }
+    meta += renderAction(rule.action);
+    
     item.innerHTML = `
       <div class="rule-main">
-        <div class="rule-title">按键 ${rule.keyCode} · ${labelBehavior(rule.behavior)}</div>
-        <div class="rule-meta">
-          ${rule.behavior === "LONG_PRESS" ? `长按 ≥ ${rule.durationMs}ms · ` : ""}
-          ${renderAction(rule.action)}
-        </div>
+        <div class="rule-title">${title}</div>
+        <div class="rule-meta">${meta}</div>
       </div>
       <div class="rule-actions">
         <button data-edit="${index}">编辑</button>
@@ -200,8 +231,14 @@ function labelBehavior(behavior) {
       return "松开";
     case "LONG_PRESS":
       return "长按";
+    case "LONG_PRESS_RELEASE":
+      return "长按释放";
     case "DOUBLE_PRESS":
       return "双击";
+    case "COMBO_DOWN":
+      return "组合键按下";
+    case "COMBO_LONG_PRESS":
+      return "组合键长按";
     default:
       return behavior;
   }
@@ -222,6 +259,8 @@ function resetForm() {
   toggleCustomKey();
   behaviorEl.value = "DOWN";
   durationEl.value = "";
+  comboKeySelectEl.value = "24"; // 默认音量上
+  toggleComboKeyField();
   actionTypeEl.value = "run_shell";
   commandEl.value = "";
   sendKeyCodeEl.value = "";
@@ -245,6 +284,8 @@ function fillForm(rule, index) {
   toggleCustomKey();
   behaviorEl.value = rule.behavior;
   durationEl.value = rule.durationMs || "";
+  comboKeySelectEl.value = rule.comboKeyCode || "24";
+  toggleComboKeyField();
   actionTypeEl.value = rule.action?.type || "run_shell";
   commandEl.value = rule.action?.command || "";
   sendKeyCodeEl.value = rule.action?.keyCode ?? "";
@@ -277,17 +318,28 @@ function validateRule(input) {
   }
 
   const behavior = input.behavior;
-  if (!["DOWN", "UP", "LONG_PRESS", "DOUBLE_PRESS"].includes(behavior)) {
+  if (!["DOWN", "UP", "LONG_PRESS", "LONG_PRESS_RELEASE", "DOUBLE_PRESS", "COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior)) {
     errors.push("请选择有效的触发行为。");
   }
 
   let durationMs = Number(input.durationMs || 0);
-  if (behavior === "LONG_PRESS") {
+  if (["LONG_PRESS", "LONG_PRESS_RELEASE", "COMBO_LONG_PRESS"].includes(behavior)) {
     if (!Number.isFinite(durationMs) || durationMs <= 0) {
       errors.push("长按阈值必须大于 0。");
     }
   } else {
     durationMs = 0;
+  }
+
+  let comboKeyCode = 0;
+  if (["COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior)) {
+    comboKeyCode = Number(input.comboKeyCode);
+    if (!Number.isInteger(comboKeyCode) || comboKeyCode < 0) {
+      errors.push("组合键必须是有效的按键代码。");
+    }
+    if (comboKeyCode === keyCode) {
+      errors.push("组合键不能与主按键相同。");
+    }
   }
 
   const actionType = input.actionType;
@@ -337,6 +389,7 @@ function validateRule(input) {
           keyCode,
           behavior,
           durationMs,
+          comboKeyCode,
           action,
         },
   };
@@ -399,6 +452,7 @@ form.addEventListener("submit", (e) => {
     keyCodeCustom: keyCodeCustomEl.value,
     behavior: behaviorEl.value,
     durationMs: durationEl.value,
+    comboKeyCode: comboKeySelectEl.value,
     actionType: actionTypeEl.value,
     command: commandEl.value,
     sendKeyCode: sendKeyCodeEl.value,
@@ -422,9 +476,17 @@ loadRules();
 
 keySelectEl.addEventListener("change", toggleCustomKey);
 actionTypeEl.addEventListener("change", toggleActionFields);
+behaviorEl.addEventListener("change", toggleComboKeyField);
 
 function toggleCustomKey() {
   const isCustom = keySelectEl.value === "custom";
   keyCodeCustomEl.classList.toggle("hidden", !isCustom);
   keyCodeCustomEl.required = isCustom;
+}
+
+function toggleComboKeyField() {
+  const behavior = behaviorEl.value;
+  const needsCombo = ["COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior);
+  labelComboKeyEl.classList.toggle("hidden", !needsCombo);
+  comboKeySelectEl.required = needsCombo;
 }

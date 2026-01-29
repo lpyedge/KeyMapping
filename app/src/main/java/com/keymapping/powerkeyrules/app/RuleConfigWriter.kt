@@ -22,7 +22,8 @@ object RuleConfigWriter {
         val prefs = context.createDeviceProtectedStorageContext().getSharedPreferences(Constants.PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit()
             .putString(Constants.PREFS_KEY_RULES_JSON, json)
-            .putLong(Constants.PREFS_KEY_RULES_UPDATED_AT, System.currentTimeMillis())
+            // 使用 elapsedRealtime 避免系統時間回撥導致配置不生效
+            .putLong(Constants.PREFS_KEY_RULES_UPDATED_AT, android.os.SystemClock.elapsedRealtime())
             .apply()
 
         val deviceContext = context.createDeviceProtectedStorageContext()

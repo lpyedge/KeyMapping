@@ -56,10 +56,25 @@ android {
     lintOptions {
         abortOnError false
     }
+
+    // Modern API 使用 resources 而非 assets 存放模組元數據
+    sourceSets {
+        main {
+            resources.srcDirs += 'src/main/resources'
+        }
+    }
 }
 
 dependencies {
-    compileOnly files('libs/api-82.jar')
+    // Modern Xposed API (libxposed) - 需要 LSPosed 1.9.1+
+    // API 文檔：https://libxposed.github.io/api/
+    // 優先從 JitPack 下載，若失敗則使用本地 AAR (app/libs/Modern_Xposed_API-29.aar)
+    compileOnly("io.github.libxposed:api:29") {
+        // 如果 JitPack 下載失敗，Gradle 會自動 fallback 到 flatDir
+    }
+    // Fallback: 本地 AAR 文件
+    compileOnly files('libs/Modern_Xposed_API-29.aar')
+    
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
 }
 

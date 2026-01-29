@@ -1,0 +1,7 @@
+id=powerkeyrules
+name=PowerKeyRules
+author=lpyedge
+description=電源鍵自定義規則模組：支援長按、雙擊等手勢映射到自定義動作
+version=1.0
+versionCode=1
+minApiVersion=29

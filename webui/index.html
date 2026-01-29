@@ -68,11 +68,17 @@
                 <option value="DOWN">按下</option>
                 <option value="UP">松开</option>
                 <option value="LONG_PRESS">长按</option>
+                <option value="LONG_PRESS_RELEASE">长按释放</option>
                 <option value="DOUBLE_PRESS">双击</option>
+                <option value="COMBO_DOWN">组合键按下</option>
+                <option value="COMBO_LONG_PRESS">组合键长按</option>
               </select>
             </label>
             <label>长按阈值 (ms)
               <input id="durationMs" type="number" min="0" step="50" placeholder="仅长按时需要" />
+            </label>
+            <label id="labelComboKey" class="hidden">组合键（第二个键）
+              <select id="comboKeySelect"></select>
             </label>
           </div>
           <div class="form-grid single">

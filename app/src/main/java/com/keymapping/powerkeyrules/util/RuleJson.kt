@@ -48,13 +48,15 @@ object RuleJson {
         val behaviorStr = obj.optString("behavior", "").uppercase()
         val behavior = runCatching { KeyBehavior.valueOf(behaviorStr) }.getOrNull() ?: return null
         val durationMs = obj.optLong("durationMs", 0)
+        val comboKeyCode = obj.optInt("comboKeyCode", 0)
         val actionObj = obj.optJSONObject("action") ?: return null
         val action = parseAction(actionObj) ?: return null
         return KeyRule(
             keyCode = keyCode,
             behavior = behavior,
             durationMs = durationMs,
-            action = action
+            action = action,
+            comboKeyCode = comboKeyCode
         )
     }
 
@@ -104,6 +106,7 @@ object RuleJson {
         obj.put("keyCode", rule.keyCode)
         obj.put("behavior", rule.behavior.name)
         obj.put("durationMs", rule.durationMs)
+        obj.put("comboKeyCode", rule.comboKeyCode)
         obj.put("action", actionToJson(rule.action))
         return obj
     }

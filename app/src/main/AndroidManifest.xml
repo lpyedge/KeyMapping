@@ -17,13 +17,7 @@
             android:name=".app.WebUiActivity"
             android:exported="false" />
 
-        <service
-            android:name=".app.RuleService"
-            android:directBootAware="true"
-            android:exported="true">
-            <!-- 不設置 android:permission，由 Binder 層 UID 檢查保證安全性 -->
-        </service>
-
+        <!-- Modern Xposed API 元數據 - 需要 LSPosed 1.9.1+ -->
         <meta-data
             android:name="xposedmodule"
             android:value="true" />
@@ -32,7 +26,10 @@
             android:value="@string/xposed_description" />
         <meta-data
             android:name="xposedminversion"
-            android:value="93" />
+            android:value="29" />
+        <meta-data
+            android:name="xposedscope"
+            android:value="android" />
     </application>
 
 </manifest>
