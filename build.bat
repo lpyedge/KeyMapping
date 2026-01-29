@@ -14,8 +14,8 @@ REM Download Xposed API if not exists
 if not exist app\libs\api-82.jar (
     echo Downloading Xposed API...
     if not exist app\libs mkdir app\libs
-    powershell -Command "Invoke-WebRequest -Uri 'https://api.xposed.info/downloads/XposedBridgeApi-82.jar' -OutFile 'app\libs\api-82.jar'"
-    if errorlevel 1 (
+    powershell -Command "try { Invoke-WebRequest -Uri 'https://jcenter.bintray.com/de/robv/android/xposed/api/82/api-82.jar' -OutFile 'app\libs\api-82.jar' } catch { Invoke-WebRequest -Uri 'https://repo1.maven.org/maven2/de/robv/android/xposed/api/82/api-82.jar' -OutFile 'app\libs\api-82.jar' }"
+    if not exist app\libs\api-82.jar (
         echo Failed to download Xposed API
         exit /b 1
     )

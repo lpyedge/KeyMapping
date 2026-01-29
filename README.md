@@ -46,7 +46,7 @@
 
 > **注意**：
 > - 當前倉庫未包含 Gradle Wrapper（`gradlew`），構建腳本會自動使用系統 `gradle`
-> - 首次構建時會自動從 `https://api.xposed.info/` 下載 Xposed API (api-82.jar)
+> - 首次構建時會自動從 JCenter/Maven Central 下載 Xposed API (api-82.jar)
 
 ### Windows
 

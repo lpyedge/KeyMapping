@@ -18,8 +18,9 @@ fi
 if [ ! -f "app/libs/api-82.jar" ]; then
     echo "Downloading Xposed API..."
     mkdir -p app/libs
-    curl -L -o app/libs/api-82.jar https://api.xposed.info/downloads/XposedBridgeApi-82.jar
-    if [ $? -ne 0 ]; then
+    curl -L -o app/libs/api-82.jar "https://jcenter.bintray.com/de/robv/android/xposed/api/82/api-82.jar" || \
+    curl -L -o app/libs/api-82.jar "https://repo1.maven.org/maven2/de/robv/android/xposed/api/82/api-82.jar"
+    if [ ! -f "app/libs/api-82.jar" ] || [ ! -s "app/libs/api-82.jar" ]; then
         echo "Error: Failed to download Xposed API" >&2
         exit 1
     fi
