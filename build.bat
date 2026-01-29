@@ -10,6 +10,18 @@ if "%BUILD_TYPE%"=="" (
     set BUILD_TYPE=debug
 )
 
+REM Download Xposed API if not exists
+if not exist app\libs\api-82.jar (
+    echo Downloading Xposed API...
+    if not exist app\libs mkdir app\libs
+    powershell -Command "Invoke-WebRequest -Uri 'https://api.xposed.info/downloads/XposedBridgeApi-82.jar' -OutFile 'app\libs\api-82.jar'"
+    if errorlevel 1 (
+        echo Failed to download Xposed API
+        exit /b 1
+    )
+    echo Xposed API downloaded successfully
+)
+
 if /i "%BUILD_TYPE%"=="clean" (
     echo Cleaning build...
     if exist gradlew.bat (

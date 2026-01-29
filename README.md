@@ -42,8 +42,11 @@
 
 - JDK 17+
 - Gradle 8.2+ 或使用系統 `gradle` 命令
+- 網絡連接（首次構建時下載 Xposed API）
 
-> **注意**：當前倉庫未包含 Gradle Wrapper（`gradlew`），構建腳本會自動使用系統 `gradle`。
+> **注意**：
+> - 當前倉庫未包含 Gradle Wrapper（`gradlew`），構建腳本會自動使用系統 `gradle`
+> - 首次構建時會自動從 `https://api.xposed.info/` 下載 Xposed API (api-82.jar)
 
 ### Windows
 

@@ -14,6 +14,18 @@ else
     exit 1
 fi
 
+# Download Xposed API if not exists
+if [ ! -f "app/libs/api-82.jar" ]; then
+    echo "Downloading Xposed API..."
+    mkdir -p app/libs
+    curl -L -o app/libs/api-82.jar https://api.xposed.info/downloads/XposedBridgeApi-82.jar
+    if [ $? -ne 0 ]; then
+        echo "Error: Failed to download Xposed API" >&2
+        exit 1
+    fi
+    echo "Xposed API downloaded successfully"
+fi
+
 case "$BUILD_TYPE" in
     clean)
         echo "Cleaning build..."

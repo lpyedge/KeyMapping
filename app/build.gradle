@@ -59,7 +59,7 @@ android {
 }
 
 dependencies {
-    compileOnly 'de.robv.android.xposed:api:82:sources'
+    compileOnly files('libs/api-82.jar')
     implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
 }
 

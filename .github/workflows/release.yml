@@ -46,6 +46,11 @@ jobs:
       run: |
         yes | sdkmanager "platforms;android-34" "build-tools;34.0.0"
 
+    - name: 下载 Xposed API
+      run: |
+        mkdir -p app/libs
+        curl -L -o app/libs/api-82.jar https://api.xposed.info/downloads/XposedBridgeApi-82.jar
+
     - name: 验证输入参数
       run: |
         set -euo pipefail
