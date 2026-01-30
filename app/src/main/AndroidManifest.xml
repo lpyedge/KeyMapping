@@ -1,4 +1,5 @@
-<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    package="com.keymapping.powerkeyrules">
 
     <application
         android:allowBackup="false"
@@ -26,7 +27,7 @@
             android:value="@string/xposed_description" />
         <meta-data
             android:name="xposedminversion"
-            android:value="29" />
+            android:value="93" />
         <meta-data
             android:name="xposedscope"
             android:value="android" />
