@@ -5,8 +5,7 @@ import com.keymapping.powerkeyrules.model.RuleConfig
 import com.keymapping.powerkeyrules.util.Constants
 import com.keymapping.powerkeyrules.util.RuleJson
 import com.keymapping.powerkeyrules.util.Time
-import io.github.libxposed.api.XposedModule
-import io.github.libxposed.service.XposedService
+import io.github.libxposed.XposedModule
 import java.io.BufferedReader
 
 /**

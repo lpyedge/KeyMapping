@@ -2,9 +2,9 @@ package com.keymapping.powerkeyrules.xposed
 
 import android.view.KeyEvent
 import com.keymapping.powerkeyrules.model.KeyBehavior
-import io.github.libxposed.api.XposedInterface
-import io.github.libxposed.api.XposedModule
-import io.github.libxposed.api.XposedModuleInterface
+import io.github.libxposed.XposedInterface
+import io.github.libxposed.XposedModule
+import io.github.libxposed.XposedModuleInterface
 import java.lang.reflect.Method
 
 /**
