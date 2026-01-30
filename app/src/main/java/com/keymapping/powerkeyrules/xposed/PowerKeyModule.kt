@@ -2,6 +2,7 @@ package com.keymapping.powerkeyrules.xposed
 
 import android.view.KeyEvent
 import com.keymapping.powerkeyrules.model.KeyBehavior
+import io.github.libxposed.XposedContext
 import io.github.libxposed.XposedInterface
 import io.github.libxposed.XposedModule
 import io.github.libxposed.XposedModuleInterface
@@ -19,7 +20,7 @@ import java.lang.reflect.Method
  * - 使用 deoptimize 提升 Hook 穩定性
  */
 class PowerKeyModule(
-    base: XposedInterface,
+    base: XposedContext,
     param: XposedModuleInterface.ModuleLoadedParam
 ) : XposedModule(base, param) {
 
@@ -31,18 +32,18 @@ class PowerKeyModule(
     }
 
     init {
-        xposedInterface = base
-        log("PowerKeyModule initialized, apiVersion=${param.apiVersion}")
-    }
+        xposedInterface = base as? XposedInterface
+        log("PowerKeyModule initialized")
 
-    override fun onSystemServerLoaded(param: XposedModuleInterface.SystemServerLoadedParam) {
-        log("onSystemServerLoaded called")
-        
         // 初始化規則存儲（使用 Remote Preferences）
         ModernRuleStore.init(this)
-        
-        // Hook PhoneWindowManager.interceptKeyBeforeQueueing
-        tryHookPhoneWindowManager(param.classLoader)
+
+        // 嘗試使用 ModuleLoadedParam 提供的 classLoader 立即進行 hook
+        try {
+            tryHookPhoneWindowManager(param.classLoader)
+        } catch (t: Throwable) {
+            log("Hook setup deferred: ${t.message}")
+        }
     }
 
     private fun tryHookPhoneWindowManager(classLoader: ClassLoader) {
@@ -60,8 +61,10 @@ class PowerKeyModule(
             runCatching { deoptimize(method) }
                 .onFailure { log("deoptimize skipped: ${it.message}") }
 
-            // 註冊 Hook
-            hook(method, InterceptKeyHooker::class.java)
+            // 註冊 Hook（需將 Class 轉成期望的 Hooker 類型）
+            @Suppress("UNCHECKED_CAST")
+            val hookerClass = InterceptKeyHooker::class.java as Class<out XposedInterface.Hooker<java.lang.reflect.Method>>
+            hook(method, hookerClass)
             
             log("Successfully hooked ${method.name} with ${method.parameterCount} params")
         }.onFailure {
@@ -119,7 +122,7 @@ class PowerKeyModule(
      * 實現 XposedInterface.Hooker 接口，提供 before/after 靜態方法
      * API 文檔：https://libxposed.github.io/api/io/github/libxposed/api/XposedInterface.Hooker.html
      */
-    class InterceptKeyHooker : XposedInterface.Hooker {
+    class InterceptKeyHooker : XposedInterface.Hooker<java.lang.reflect.Method> {
         companion object {
             // 遞歸防護：最近執行的 keyCode+action 時間戳
             private val recentDispatch = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -130,7 +133,7 @@ class PowerKeyModule(
              * @param callback 提供 args、thisObject、returnAndSkip() 等方法
              */
             @JvmStatic
-            fun before(callback: XposedInterface.BeforeHookCallback) {
+            fun before(callback: XposedInterface.BeforeHookCallback<java.lang.reflect.Method>) {
                 try {
                     val args = callback.args
                     val event = args.firstOrNull { it is KeyEvent } as? KeyEvent ?: return
@@ -206,7 +209,7 @@ class PowerKeyModule(
              * 本模組不需要後置處理，但提供空實現以符合接口規範
              */
             @JvmStatic
-            fun after(callback: XposedInterface.AfterHookCallback) {
+            fun after(callback: XposedInterface.AfterHookCallback<java.lang.reflect.Method>) {
                 // 不需要後置處理
             }
         }

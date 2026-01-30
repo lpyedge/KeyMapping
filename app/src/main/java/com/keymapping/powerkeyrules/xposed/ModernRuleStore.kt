@@ -6,6 +6,7 @@ import com.keymapping.powerkeyrules.util.Constants
 import com.keymapping.powerkeyrules.util.RuleJson
 import com.keymapping.powerkeyrules.util.Time
 import io.github.libxposed.XposedModule
+import java.lang.reflect.Method
 import java.io.BufferedReader
 
 /**
@@ -144,9 +145,20 @@ object ModernRuleStore {
     private fun getRemotePrefs(): android.content.SharedPreferences? {
         val mod = module ?: return null
         return try {
-            // libxposed/service 提供的 Remote Preferences API
-            // 自動處理跨進程通信，無需 AIDL
-            mod.getRemotePreferences(Constants.PREFS_NAME)
+            // Some versions of libxposed expose getRemotePreferences on the module/context; use reflection to be safe
+            val m = try {
+                mod.javaClass.getMethod("getRemotePreferences", String::class.java)
+            } catch (ns: NoSuchMethodException) {
+                null
+            }
+            if (m != null) {
+                @Suppress("UNCHECKED_CAST")
+                val prefs = m.invoke(mod, Constants.PREFS_NAME) as? android.content.SharedPreferences
+                prefs
+            } else {
+                module?.log("getRemotePreferences not available on module")
+                null
+            }
         } catch (t: Throwable) {
             module?.log("getRemotePreferences failed: ${t.message}")
             null

@@ -144,3 +144,70 @@ task printAndroidPlatform {
         println platformJar.exists() ? "[printAndroidPlatform] FOUND" : "[printAndroidPlatform] NOT FOUND"
     }
 }
+
+// Dump class signatures from the AAR's classes.jar using javap
+task dumpXposedSignatures {
+    group = 'debug'
+    description = 'Runs javap on key classes inside the local Modern_Xposed_API AAR to show method signatures'
+    doFirst {
+        def aar = file('libs/Modern_Xposed_API-29.aar')
+        if (!aar.exists()) {
+            throw new GradleException("AAR not found: ${aar}")
+        }
+        copy {
+            from zipTree(aar)
+            include 'classes.jar'
+            into 'build/tmp/dumpXposed'
+        }
+    }
+    doLast {
+        def classesJar = file('build/tmp/dumpXposed/classes.jar')
+        if (!classesJar.exists()) {
+            throw new GradleException('classes.jar not found inside AAR')
+        }
+        def classesToDump = [
+            'io.github.libxposed.XposedModule',
+            'io.github.libxposed.XposedInterface',
+            'io.github.libxposed.XposedModuleInterface',
+            'io.github.libxposed.XposedContext',
+            'io.github.libxposed.XposedInterface$Hooker'
+        ]
+        println "[dumpXposedSignatures] Attempting to run javap on: ${classesToDump} (classpath=${classesJar})"
+        try {
+            project.exec {
+                executable = 'javap'
+                args = ['-private', '-classpath', classesJar.absolutePath] + classesToDump
+                standardOutput = System.out
+                errorOutput = System.err
+            }
+        } catch (Throwable t) {
+            println "[dumpXposedSignatures] javap failed or not available: ${t.message}"
+            println "[dumpXposedSignatures] Falling back to binary search of class names/constants inside classes.jar"
+            def zipFile = new java.util.zip.ZipFile(classesJar)
+            def targets = [
+                'getRemotePreferences', 'onSystemServerLoaded', 'apiVersion', 'deoptimize', 'hook', 'log', 'returnAndSkip',
+                'BeforeHookCallback', 'AfterHookCallback', 'Hooker', 'XposedInterface', 'XposedModule', 'XposedModuleInterface'
+            ]
+            targets.each { tkn -> println "[dumpXposedSignatures] Looking for token: ${tkn}" }
+            zipFile.entries().each { entry ->
+                if (entry.name.endsWith('.class')) {
+                    def is = zipFile.getInputStream(entry)
+                    byte[] bytes = is.readAllBytes()
+                    is.close()
+                    String content = null
+                    try {
+                        content = new String(bytes, 'UTF-8')
+                    } catch (Exception e) {
+                        content = new String(bytes, 'ISO-8859-1')
+                    }
+                    targets.each { tkn ->
+                        if (content.contains(tkn)) {
+                            println "  - ${entry.name} contains -> ${tkn}"
+                        }
+                    }
+                }
+            }
+            zipFile.close()
+        }
+    }
+}
