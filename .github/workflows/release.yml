@@ -113,7 +113,22 @@ jobs:
         gradle assembleDebug --stacktrace
         echo "✅ Debug APK 构建完成"
 
+    - name: 检查 Release 签名凭证
+      id: signing_check
+      run: |
+        set -euo pipefail
+
+        # 判斷條件：如果有传入 keystore 的 secret（例如 KEYSTORE_BASE64）或仓库内存在 keystore 文件，则开启 release 构建
+        if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ] || [ -f "app/libs/Modern_Xposed_API-29.aar" ] || [ -f "app/keystore.jks" ]; then
+          echo "signing=true" >> $GITHUB_OUTPUT
+          echo "✅ Release signing assets available"
+        else
+          echo "signing=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Release signing assets not found; release build will be skipped"
+        fi
+
     - name: 构建 Release APK
+      if: ${{ steps.signing_check.outputs.signing == 'true' }}
       run: |
         echo "🔨 开始构建 Release APK..."
         gradle assembleRelease --stacktrace
@@ -123,45 +138,63 @@ jobs:
       id: rename
       run: |
         set -euo pipefail
-        
-        VERSION_NAME="${{ github.event.inputs.version_name }}"
-        VERSION_CODE="${{ github.event.inputs.version_code }}"
-        
+
         # 从 build.gradle 读取实际版本
         ACTUAL_VERSION_NAME=$(grep "versionName" app/build.gradle | sed -E "s/.*versionName[[:space:]]*'([^']*)'.*/\1/")
         ACTUAL_VERSION_CODE=$(grep "versionCode" app/build.gradle | sed -E "s/.*versionCode[[:space:]]*([0-9]+).*/\1/")
-        
+
         echo "实际版本: ${ACTUAL_VERSION_NAME} (${ACTUAL_VERSION_CODE})"
-        
+
         # 生成文件名
         DEBUG_APK_NAME="PowerKeyRules-v${ACTUAL_VERSION_NAME}-debug.apk"
         RELEASE_APK_NAME="PowerKeyRules-v${ACTUAL_VERSION_NAME}-release.apk"
-        
-        # 重命名文件
-        cp app/build/outputs/apk/debug/app-debug.apk "${DEBUG_APK_NAME}"
-        cp app/build/outputs/apk/release/app-release.apk "${RELEASE_APK_NAME}"
-        
-        # 输出到 GitHub env
-        echo "DEBUG_APK_NAME=${DEBUG_APK_NAME}" >> $GITHUB_ENV
-        echo "RELEASE_APK_NAME=${RELEASE_APK_NAME}" >> $GITHUB_ENV
+
+        # 重命名/复制 Debug APK（必须存在）
+        if [ -f "app/build/outputs/apk/debug/app-debug.apk" ]; then
+          cp app/build/outputs/apk/debug/app-debug.apk "${DEBUG_APK_NAME}"
+          echo "DEBUG_APK_NAME=${DEBUG_APK_NAME}" >> $GITHUB_ENV
+        else
+          echo "Error: debug apk not found" >&2
+          exit 1
+        fi
+
+        # 如果 steps.signing_check 指示签名可用并且 release APK 存在，则复制 release APK
+        if [ "${{ steps.signing_check.outputs.signing }}" = "true" ] && [ -f "app/build/outputs/apk/release/app-release.apk" ]; then
+          cp app/build/outputs/apk/release/app-release.apk "${RELEASE_APK_NAME}"
+          echo "RELEASE_APK_NAME=${RELEASE_APK_NAME}" >> $GITHUB_ENV
+          echo "release_present=true" >> $GITHUB_OUTPUT
+        else
+          echo "RELEASE_APK_NAME=" >> $GITHUB_ENV
+          echo "release_present=false" >> $GITHUB_OUTPUT
+          echo "⚠️ Release APK 未生成或签名不可用，已跳过复制 release APK"
+        fi
+
+        # 输出版本信息
         echo "VERSION_NAME=${ACTUAL_VERSION_NAME}" >> $GITHUB_ENV
         echo "VERSION_CODE=${ACTUAL_VERSION_CODE}" >> $GITHUB_ENV
-        
-        echo "📦 APK 文件已重命名:"
+
+        echo "📦 APK 文件已处理:"
         echo "  - ${DEBUG_APK_NAME}"
-        echo "  - ${RELEASE_APK_NAME}"
+        if [ "${{ steps.signing_check.outputs.signing }}" = "true" ]; then
+          echo "  - ${RELEASE_APK_NAME} (如果存在)"
+        fi
 
     - name: 生成文件校验和
       run: |
         echo "🔐 生成 SHA256 校验和..."
+        # Debug APK 必定存在
         sha256sum "${DEBUG_APK_NAME}" > "${DEBUG_APK_NAME}.sha256"
-        sha256sum "${RELEASE_APK_NAME}" > "${RELEASE_APK_NAME}.sha256"
-        
         echo "Debug APK SHA256:"
         cat "${DEBUG_APK_NAME}.sha256"
         echo ""
-        echo "Release APK SHA256:"
-        cat "${RELEASE_APK_NAME}.sha256"
+        # 仅当 release_present 为 true 时生成 release 校验
+        if [ "${{ steps.rename.outputs.release_present }}" = "true" ]; then
+          sha256sum "${RELEASE_APK_NAME}" > "${RELEASE_APK_NAME}.sha256"
+          echo "Release APK SHA256:"
+          cat "${RELEASE_APK_NAME}.sha256"
+        else
+          echo "⚠️ Release APK 未生成，跳过 Release SHA256 生成"
+        fi
 
     - name: 清理旧版本发布
       if: ${{ github.event.inputs.clean_history == 'true' }}
@@ -286,6 +319,7 @@ jobs:
           ${{ env.DEBUG_APK_NAME }}.sha256
 
     - name: 上传 Release APK 构建产物
+      if: ${{ steps.rename.outputs.release_present == 'true' }}
       uses: actions/upload-artifact@v4
       with:
         name: PowerKeyRules-Release
@@ -295,6 +329,7 @@ jobs:
 
     - name: 创建 GitHub Release
       uses: softprops/action-gh-release@v1
+      if: ${{ steps.rename.outputs.release_present == 'true' }}
       with:
         tag_name: ${{ steps.tag.outputs.tag }}
         name: "PowerKeyRules v${{ env.VERSION_NAME }}"
@@ -306,6 +341,21 @@ jobs:
           ${{ env.RELEASE_APK_NAME }}.sha256
         draft: false
         prerelease: false
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+    - name: 创建 Debug-only Release（当无签名时）
+      if: ${{ steps.rename.outputs.release_present == 'false' }}
+      uses: softprops/action-gh-release@v1
+      with:
+        tag_name: ${{ steps.tag.outputs.tag }}
+        name: "PowerKeyRules v${{ env.VERSION_NAME }} (debug-only)"
+        body_path: release_notes.md
+        files: |
+          ${{ env.DEBUG_APK_NAME }}
+          ${{ env.DEBUG_APK_NAME }}.sha256
+        draft: false
+        prerelease: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
