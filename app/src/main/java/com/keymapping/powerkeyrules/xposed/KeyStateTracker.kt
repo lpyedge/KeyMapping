@@ -98,7 +98,6 @@ object KeyStateTracker {
         return when (event.action) {
             KeyEvent.ACTION_DOWN -> handleKeyDown(keyCode, now, state)
             KeyEvent.ACTION_UP -> handleKeyUp(keyCode, now, state)
-            KeyEvent.ACTION_CANCEL -> handleKeyCancel(keyCode, state)
             else -> null
         }
     }

@@ -20,7 +20,7 @@ object DefaultRules {
                     behavior = KeyBehavior.LONG_PRESS,
                     durationMs = 500,
                     action = KeyAction.LaunchIntent(
-                        IntentSpec(action = Intent.ACTION_VOICE_ASSIST)
+                        IntentSpec(action = "android.intent.action.VOICE_ASSIST")
                     )
                 ),
                 // 2000ms 長按：喚起系統電源菜單（關機/重啟）
