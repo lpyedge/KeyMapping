@@ -91,6 +91,8 @@ dependencies {
         // local AAR not present; rely on remote resolution
     }
 
+}
+
 // Ensure app/src/main/assets/webui is always in sync with root webui/ directory
 task syncWebUiAssets(type: Copy) {
     description = 'Syncs webui assets from project root to app assets folder'
