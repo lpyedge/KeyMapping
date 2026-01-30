@@ -13,6 +13,6 @@
 
 ## 註意事項
 
-- 此目錄的檔案**不再用於** Magisk/KernelSU WebUI
+- 此目錄的檔案僅用於 APK 內嵌 WebView（同步到 `app/src/main/assets/webui/`）
 - 修改後需同步更新到 `app/src/main/assets/webui/`
 - Android WebView bridge 不支援 `exec()` 命令，僅支援 `loadRulesJson/saveRulesJson`

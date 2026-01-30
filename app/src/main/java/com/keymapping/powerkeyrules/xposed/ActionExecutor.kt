@@ -10,7 +10,8 @@ import java.util.concurrent.atomic.AtomicInteger
 /**
  * 動作執行器
  * 
- * 改進：
+ * 優化改進：
+ * - 移除 daemon 線程標記（system_server 中使用非 daemon 更安全）
  * - 添加執行超時機制
  * - 添加隊列深度限制（防止堆積）
  * - 後台線程執行避免阻塞 system_server
@@ -21,8 +22,13 @@ object ActionExecutor {
     
     private val queueSize = AtomicInteger(0)
     
+    // 修復 Bug 7：移除 isDaemon = true
+    // 在 system_server 中，daemon 線程會在 JVM 退出時被強制終止
+    // 使用非 daemon 線程確保正在執行的命令能夠完成
     private val executor = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "PowerKeyRules-Action").apply { isDaemon = true }
+        Thread(runnable, "PowerKeyRules-Action").apply { 
+            isDaemon = false  // 非 daemon 線程
+        }
     }
 
     fun execute(action: KeyAction) {
@@ -105,4 +111,3 @@ object ActionExecutor {
         PowerKeyModule.getXposed()?.log(message)
     }
 }
-

@@ -38,9 +38,9 @@ class PowerKeyModule(
         // 初始化規則存儲（使用 Remote Preferences）
         ModernRuleStore.init(this)
 
-        // 嘗試使用 ModuleLoadedParam 提供的 classLoader 立即進行 hook
+        // 嘗試使用傳入的 XposedContext 的 classLoader 立即進行 hook（ModuleLoadedParam 在 AAR 中可能無 classLoader 字段）
         try {
-            tryHookPhoneWindowManager(param.classLoader)
+            tryHookPhoneWindowManager(base.javaClass.classLoader ?: this.javaClass.classLoader)
         } catch (t: Throwable) {
             log("Hook setup deferred: ${t.message}")
         }
@@ -61,10 +61,9 @@ class PowerKeyModule(
             runCatching { deoptimize(method) }
                 .onFailure { log("deoptimize skipped: ${it.message}") }
 
-            // 註冊 Hook（需將 Class 轉成期望的 Hooker 類型）
-            @Suppress("UNCHECKED_CAST")
-            val hookerClass = InterceptKeyHooker::class.java as Class<out XposedInterface.Hooker<java.lang.reflect.Method>>
-            hook(method, hookerClass)
+            // 註冊 Hook：Modern API 期望的是 Hooker 的實例，實作 instance 方法並傳入實例
+            val hookerInstance = InterceptKeyHooker()
+            hook(method, hookerInstance)
             
             log("Successfully hooked ${method.name} with ${method.parameterCount} params")
         }.onFailure {
@@ -152,7 +151,7 @@ class PowerKeyModule(
 
                     // 3. 遞歸防護：同一 keyCode+action 在短時間內重複觸發則忽略
                     val key = "${event.keyCode}:${event.action}"
-                    val now = event.eventTime
+                    val now = android.os.SystemClock.uptimeMillis()  // 使用 uptimeMillis 而非 eventTime
                     val lastTime = recentDispatch[key] ?: 0L
                     if (now - lastTime < REENTRY_GUARD_MS) {
                         return
@@ -212,6 +211,15 @@ class PowerKeyModule(
             fun after(callback: XposedInterface.AfterHookCallback<java.lang.reflect.Method>) {
                 // 不需要後置處理
             }
+        }
+        
+        // 實例方法：把調用轉發到 companion object，因為 API 要求實例 Hooker
+        override fun before(callback: XposedInterface.BeforeHookCallback<java.lang.reflect.Method>) {
+            Companion.before(callback)
+        }
+
+        override fun after(callback: XposedInterface.AfterHookCallback<java.lang.reflect.Method>) {
+            Companion.after(callback)
         }
     }
 }

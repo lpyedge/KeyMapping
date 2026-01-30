@@ -1,6 +1,4 @@
-// 僅用於非-Android WebView 環境（Magisk/KSU WebUI）
-const DEFAULT_RULES_PATH = "/data/adb/modules/PowerKeyRules/rules.json";
-const bridge = window.PowerKeyRulesBridge;
+// 僅用於 APK 的內嵌 WebView 環境
 
 // DOM refs
 const statusEl = document.getElementById("status");
@@ -47,21 +45,45 @@ function setStatus(message) {
   statusEl.textContent = message;
 }
 
-async function fetchDefaultConfig() {
-  // Android WebView: ask native side for defaults first
-  try {
-    if (window.PowerKeyRulesAndroid && typeof window.PowerKeyRulesAndroid.loadDefaultRulesJson === "function") {
-      const json = window.PowerKeyRulesAndroid.loadDefaultRulesJson();
-      if (json) return JSON.parse(json);
+// 統一 Bridge 適配器
+const UnifiedBridge = {
+  async load() {
+    // 1. APK WebView 环境
+    if (window.PowerKeyRulesAndroid && typeof window.PowerKeyRulesAndroid.loadRulesJson === "function") {
+      return window.PowerKeyRulesAndroid.loadRulesJson();
     }
-  } catch (_) {}
+    throw new Error("无可用 Bridge：仅支持 APK 内嵌 WebView 环境");
+  },
+
+  async save(content) {
+    if (window.PowerKeyRulesAndroid && typeof window.PowerKeyRulesAndroid.saveRulesJson === "function") {
+      const success = window.PowerKeyRulesAndroid.saveRulesJson(content);
+      if (!success) throw new Error("保存失败 (APK Bridge)");
+      return;
+    }
+    throw new Error("无可用 Bridge：仅支持 APK 内嵌 WebView 环境");
+  },
+
+  async loadDefault() {
+    if (window.PowerKeyRulesAndroid && typeof window.PowerKeyRulesAndroid.loadDefaultRulesJson === "function") {
+      return window.PowerKeyRulesAndroid.loadDefaultRulesJson();
+    }
+    return null;
+  }
+};
+
+async function fetchDefaultConfig() {
+  try {
+    const json = await UnifiedBridge.loadDefault();
+    if (json) return JSON.parse(json);
+  } catch (_) { }
 
   try {
     const response = await fetch("default-rules.json", { cache: "no-store" });
     if (response.ok) {
       return JSON.parse(await response.text());
     }
-  } catch (_) {}
+  } catch (_) { }
   return {
     version: 1,
     doublePressIntervalMs: 300,
@@ -71,24 +93,18 @@ async function fetchDefaultConfig() {
 }
 
 async function loadRules() {
-  if (!bridge) {
-    config = await fetchDefaultConfig();
-    render();
-    setStatus("未检测到 WebUI bridge，仅载入默认模板。");
-    return;
-  }
-
   try {
     setStatus("正在读取规则...");
-    const json = await bridge.readFile("");  // Android bridge 忽略路徑參數
+    const json = await UnifiedBridge.load();
     const parsed = JSON.parse(json || "{}");
     config = normalizeConfig(parsed);
     render();
     setStatus("已读取当前配置");
   } catch (err) {
+    console.error(err);
     config = await fetchDefaultConfig();
     render();
-    setStatus(`读取失败，已载入默认模板：${err.message}`);
+    setStatus(`读取失败，已载入默认模板 (${err.message || "未知错误"})`);
   }
 }
 
@@ -111,10 +127,10 @@ function normalizeRule(r) {
   const comboKeyCode = Number(r.comboKeyCode) || 0;
   const action = r.action || {};
   const type = String(action.type || "");
-  
+
   // 基础规则对象
   const baseRule = { keyCode, behavior, durationMs, comboKeyCode };
-  
+
   if (type === "run_shell") {
     if (!action.command) return null;
     return { ...baseRule, action: { type: "run_shell", command: String(action.command) } };
@@ -178,21 +194,21 @@ function renderRules() {
   config.rules.forEach((rule, index) => {
     const item = document.createElement("div");
     item.className = "rule-item";
-    
+
     // 构建标题
     let title = `按键 ${rule.keyCode}`;
     if (rule.comboKeyCode > 0) {
       title += ` + ${rule.comboKeyCode}`;
     }
     title += ` · ${labelBehavior(rule.behavior)}`;
-    
+
     // 构建元信息
     let meta = "";
     if (["LONG_PRESS", "LONG_PRESS_RELEASE", "COMBO_LONG_PRESS"].includes(rule.behavior)) {
       meta += `长按 ≥ ${rule.durationMs}ms · `;
     }
     meta += renderAction(rule.action);
-    
+
     item.innerHTML = `
       <div class="rule-main">
         <div class="rule-title">${title}</div>
@@ -304,6 +320,7 @@ function toggleActionFields() {
 
 function validateRule(input) {
   const errors = [];
+  const warnings = [];  // 新增警告列表
   let keyCode;
   if (input.keySelect === "custom") {
     keyCode = Number(input.keyCodeCustom);
@@ -320,6 +337,12 @@ function validateRule(input) {
   const behavior = input.behavior;
   if (!["DOWN", "UP", "LONG_PRESS", "LONG_PRESS_RELEASE", "DOUBLE_PRESS", "COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior)) {
     errors.push("请选择有效的触发行为。");
+  }
+
+  // Bug 5 修復：阻止電源鍵 DOWN 規則
+  // README 規定：電源鍵的 DOWN 事件永不攔截，確保設備能正常喚醒
+  if (keyCode === 26 && behavior === "DOWN") {
+    errors.push("电源键的 DOWN 行为不允许配置，以确保设备能正常唤醒。");
   }
 
   let durationMs = Number(input.durationMs || 0);
@@ -380,18 +403,36 @@ function validateRule(input) {
     errors.push("请选择有效的动作类型。");
   }
 
+  // 優化 4：規則衝突檢測
+  // 檢查是否存在同一按鍵的 UP + DOUBLE_PRESS 衝突
+  if (errors.length === 0 && config && config.rules) {
+    const conflictBehaviors = ["UP", "DOUBLE_PRESS"];
+    if (conflictBehaviors.includes(behavior)) {
+      const otherBehavior = behavior === "UP" ? "DOUBLE_PRESS" : "UP";
+      const hasConflict = config.rules.some((r, idx) => {
+        // 編輯模式下排除自己
+        if (editingIndex !== null && idx === editingIndex) return false;
+        return r.keyCode === keyCode && r.behavior === otherBehavior;
+      });
+      if (hasConflict) {
+        warnings.push(`⚠️ 同一按键同时配置 UP 和 DOUBLE_PRESS 可能导致双击时先触发单击。`);
+      }
+    }
+  }
+
   return {
     ok: errors.length === 0,
     errors,
+    warnings,  // 新增警告返回
     rule: errors.length
       ? null
       : {
-          keyCode,
-          behavior,
-          durationMs,
-          comboKeyCode,
-          action,
-        },
+        keyCode,
+        behavior,
+        durationMs,
+        comboKeyCode,
+        action,
+      },
   };
 }
 
@@ -402,14 +443,9 @@ async function saveToDisk() {
 
   const payload = JSON.stringify(config, null, 2);
 
-  if (!bridge) {
-    setStatus("未检测到 WebUI bridge，无法写入。");
-    return;
-  }
-
   try {
     setStatus("正在保存...");
-    await bridge.writeFile("", payload);  // Android bridge 忽略路徑參數
+    await UnifiedBridge.save(payload);
     setStatus("已保存配置");
   } catch (err) {
     setStatus(`保存失败：${err.message}`);
@@ -447,7 +483,7 @@ ruleListEl.addEventListener("click", (e) => {
 form.addEventListener("submit", (e) => {
   e.preventDefault();
   formErrorEl.textContent = "";
-  const { ok, errors, rule } = validateRule({
+  const { ok, errors, warnings, rule } = validateRule({
     keySelect: keySelectEl.value,
     keyCodeCustom: keyCodeCustomEl.value,
     behavior: behaviorEl.value,
@@ -462,6 +498,11 @@ form.addEventListener("submit", (e) => {
     formErrorEl.textContent = errors.join(" ");
     return;
   }
+  // 如果有警告，顯示但不阻止保存
+  if (warnings && warnings.length > 0) {
+    alert(warnings.join("\n"));
+  }
+
   if (editingIndex === null) {
     config.rules.push(rule);
   } else {
