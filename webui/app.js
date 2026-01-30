@@ -1,8 +1,9 @@
-// 僅用於 APK 的內嵌 WebView 環境
+// SVG Icons
+const ICON_EDIT = `<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M20.71,7.04C21.1,6.65 21.1,6.02 20.71,5.63L18.37,3.29C17.97,2.9 17.34,2.9 16.94,3.29L15.12,5.12L18.87,8.87M3,17.25V21H6.75L17.81,9.93L14.06,6.18L3,17.25Z"/></svg>`;
+const ICON_DELETE = `<svg viewBox="0 0 24 24" width="16" height="16"><path fill="currentColor" d="M19,4H15.5L14.5,3H9.5L8.5,4H5V6H19V4M6,19A2,2 0 0,0 8,21H16A2,2 0 0,0 18,19V7H6V19Z"/></svg>`;
 
 // DOM refs
 const statusEl = document.getElementById("status");
-const rulesPathEl = document.getElementById("rulesPath");
 const ruleListEl = document.getElementById("ruleList");
 const form = document.getElementById("ruleForm");
 const formTitle = document.getElementById("formTitle");
@@ -22,6 +23,10 @@ const doubleIntervalEl = document.getElementById("doubleInterval");
 const longPressMinEl = document.getElementById("longPressMin");
 const comboKeySelectEl = document.getElementById("comboKeySelect");
 const labelComboKeyEl = document.getElementById("labelComboKey");
+
+// Modals
+const modalSettings = document.getElementById("modalSettings");
+const modalEditor = document.getElementById("modalEditor");
 
 const KEY_OPTIONS = [
   { label: "电源键 (POWER)", code: 26 },
@@ -45,25 +50,30 @@ function setStatus(message) {
   statusEl.textContent = message;
 }
 
+// Modal helper
+function showModal(modal) {
+  modal.classList.add("show");
+}
+function hideModal(modal) {
+  modal.classList.remove("show");
+}
+
 // 統一 Bridge 適配器
 const UnifiedBridge = {
   async load() {
-    // 1. APK WebView 环境
     if (window.PowerKeyRulesAndroid && typeof window.PowerKeyRulesAndroid.loadRulesJson === "function") {
       return window.PowerKeyRulesAndroid.loadRulesJson();
     }
     throw new Error("无可用 Bridge：仅支持 APK 内嵌 WebView 环境");
   },
-
   async save(content) {
     if (window.PowerKeyRulesAndroid && typeof window.PowerKeyRulesAndroid.saveRulesJson === "function") {
       const success = window.PowerKeyRulesAndroid.saveRulesJson(content);
-      if (!success) throw new Error("保存失败 (APK Bridge)");
+      if (!success) throw new Error("保存失败");
       return;
     }
-    throw new Error("无可用 Bridge：仅支持 APK 内嵌 WebView 环境");
+    throw new Error("无可用 Bridge");
   },
-
   async loadDefault() {
     if (window.PowerKeyRulesAndroid && typeof window.PowerKeyRulesAndroid.loadDefaultRulesJson === "function") {
       return window.PowerKeyRulesAndroid.loadDefaultRulesJson();
@@ -76,13 +86,6 @@ async function fetchDefaultConfig() {
   try {
     const json = await UnifiedBridge.loadDefault();
     if (json) return JSON.parse(json);
-  } catch (_) { }
-
-  try {
-    const response = await fetch("default-rules.json", { cache: "no-store" });
-    if (response.ok) {
-      return JSON.parse(await response.text());
-    }
   } catch (_) { }
   return {
     version: 1,
@@ -98,13 +101,25 @@ async function loadRules() {
     const json = await UnifiedBridge.load();
     const parsed = JSON.parse(json || "{}");
     config = normalizeConfig(parsed);
+
+    // 如果讀取的規則為空，則嘗試載入默認模板
+    if (config.rules.length === 0) {
+      const defaultConfig = await fetchDefaultConfig();
+      if (defaultConfig && defaultConfig.rules.length > 0) {
+        config.rules = defaultConfig.rules;
+        setStatus("已载入默认模板（初始规则）");
+      } else {
+        setStatus("已读取空配置");
+      }
+    } else {
+      setStatus("已读取当前配置");
+    }
     render();
-    setStatus("已读取当前配置");
   } catch (err) {
     console.error(err);
     config = await fetchDefaultConfig();
     render();
-    setStatus(`读取失败，已载入默认模板 (${err.message || "未知错误"})`);
+    setStatus(`读取失败，已载入默认模板 (${err.message})`);
   }
 }
 
@@ -122,30 +137,10 @@ function normalizeRule(r) {
   const keyCode = Number(r.keyCode);
   if (!Number.isInteger(keyCode) || keyCode < 0) return null;
   const behavior = String(r.behavior || "").toUpperCase();
-  if (!["DOWN", "UP", "LONG_PRESS", "LONG_PRESS_RELEASE", "DOUBLE_PRESS", "COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior)) return null;
   const durationMs = Number(r.durationMs) || 0;
   const comboKeyCode = Number(r.comboKeyCode) || 0;
   const action = r.action || {};
-  const type = String(action.type || "");
-
-  // 基础规则对象
-  const baseRule = { keyCode, behavior, durationMs, comboKeyCode };
-
-  if (type === "run_shell") {
-    if (!action.command) return null;
-    return { ...baseRule, action: { type: "run_shell", command: String(action.command) } };
-  }
-  if (type === "send_key") {
-    const sendKey = Number(action.keyCode);
-    if (!Number.isInteger(sendKey) || sendKey < 0) return null;
-    return { ...baseRule, action: { type: "send_key", keyCode: sendKey } };
-  }
-  if (type === "launch_intent") {
-    const intent = action.intent || {};
-    if (typeof intent !== "object" || intent == null) return null;
-    return { ...baseRule, action: { type: "launch_intent", intent } };
-  }
-  return null;
+  return { keyCode, behavior, durationMs, comboKeyCode, action };
 }
 
 function render() {
@@ -153,7 +148,6 @@ function render() {
   renderKeyOptions();
   renderComboKeyOptions();
   renderRules();
-  resetForm();
 }
 
 function renderKeyOptions() {
@@ -168,7 +162,6 @@ function renderKeyOptions() {
 
 function renderComboKeyOptions() {
   comboKeySelectEl.innerHTML = "";
-  // 组合键不包含"其它/自定义"选项
   KEY_OPTIONS.filter(opt => opt.code !== "custom").forEach((opt) => {
     const option = document.createElement("option");
     option.value = opt.code;
@@ -195,17 +188,13 @@ function renderRules() {
     const item = document.createElement("div");
     item.className = "rule-item";
 
-    // 构建标题
     let title = `按键 ${rule.keyCode}`;
-    if (rule.comboKeyCode > 0) {
-      title += ` + ${rule.comboKeyCode}`;
-    }
+    if (rule.comboKeyCode > 0) title += ` + ${rule.comboKeyCode}`;
     title += ` · ${labelBehavior(rule.behavior)}`;
 
-    // 构建元信息
     let meta = "";
     if (["LONG_PRESS", "LONG_PRESS_RELEASE", "COMBO_LONG_PRESS"].includes(rule.behavior)) {
-      meta += `长按 ≥ ${rule.durationMs}ms · `;
+      meta += `長按 ≥ ${rule.durationMs}ms · `;
     }
     meta += renderAction(rule.action);
 
@@ -215,8 +204,8 @@ function renderRules() {
         <div class="rule-meta">${meta}</div>
       </div>
       <div class="rule-actions">
-        <button data-edit="${index}">编辑</button>
-        <button data-delete="${index}" class="danger">删除</button>
+        <button class="btn-icon btn-small-icon" data-edit="${index}" title="编辑">${ICON_EDIT}</button>
+        <button class="btn-icon btn-small-icon danger" data-delete="${index}" title="删除">${ICON_DELETE}</button>
       </div>
     `;
     ruleListEl.appendChild(item);
@@ -225,12 +214,8 @@ function renderRules() {
 
 function renderAction(action) {
   if (!action) return "";
-  if (action.type === "run_shell") {
-    return `命令：<code>${escapeHtml(action.command || "")}</code>`;
-  }
-  if (action.type === "send_key") {
-    return `发送按键：<code>keyevent ${escapeHtml(action.keyCode)}</code>`;
-  }
+  if (action.type === "run_shell") return `命令：<code>${escapeHtml(action.command || "")}</code>`;
+  if (action.type === "send_key") return `发送按键：<code>${escapeHtml(action.keyCode)}</code>`;
   if (action.type === "launch_intent") {
     const i = action.intent || {};
     const brief = i.action || i.className || i.package || "(intent)";
@@ -240,42 +225,27 @@ function renderAction(action) {
 }
 
 function labelBehavior(behavior) {
-  switch (behavior) {
-    case "DOWN":
-      return "按下";
-    case "UP":
-      return "松开";
-    case "LONG_PRESS":
-      return "长按";
-    case "LONG_PRESS_RELEASE":
-      return "长按释放";
-    case "DOUBLE_PRESS":
-      return "双击";
-    case "COMBO_DOWN":
-      return "组合键按下";
-    case "COMBO_LONG_PRESS":
-      return "组合键长按";
-    default:
-      return behavior;
-  }
+  const map = {
+    "DOWN": "按下", "UP": "松開", "LONG_PRESS": "長按",
+    "LONG_PRESS_RELEASE": "長按釋放", "DOUBLE_PRESS": "雙擊",
+    "COMBO_DOWN": "組合鍵按下", "COMBO_LONG_PRESS": "組合鍵長按"
+  };
+  return map[behavior] || behavior;
 }
 
 function escapeHtml(str) {
-  return String(str).replace(/[&<>"']/g, (c) => {
-    const map = { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" };
-    return map[c] || c;
-  });
+  return String(str).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
 }
 
 function resetForm() {
   editingIndex = null;
   formTitle.textContent = "添加规则";
-  keySelectEl.value = "custom";
+  keySelectEl.value = "26";
   keyCodeCustomEl.value = "";
   toggleCustomKey();
-  behaviorEl.value = "DOWN";
+  behaviorEl.value = "UP"; // 默認 UP，避開 POWER DOWN 禁止項
   durationEl.value = "";
-  comboKeySelectEl.value = "24"; // 默认音量上
+  comboKeySelectEl.value = "24";
   toggleComboKeyField();
   actionTypeEl.value = "run_shell";
   commandEl.value = "";
@@ -283,7 +253,6 @@ function resetForm() {
   intentJsonEl.value = "";
   toggleActionFields();
   formErrorEl.textContent = "";
-  document.getElementById("btnSubmit").textContent = "保存规则";
 }
 
 function fillForm(rule, index) {
@@ -308,7 +277,6 @@ function fillForm(rule, index) {
   intentJsonEl.value = rule.action?.intent ? JSON.stringify(rule.action.intent, null, 2) : "";
   toggleActionFields();
   formErrorEl.textContent = "";
-  document.getElementById("btnSubmit").textContent = "更新规则";
 }
 
 function toggleActionFields() {
@@ -320,214 +288,88 @@ function toggleActionFields() {
 
 function validateRule(input) {
   const errors = [];
-  const warnings = [];  // 新增警告列表
-  let keyCode;
-  if (input.keySelect === "custom") {
-    keyCode = Number(input.keyCodeCustom);
-    if (!Number.isInteger(keyCode) || keyCode < 0) {
-      errors.push("自定义按键代码必须是非负整数。");
-    }
-  } else {
-    keyCode = Number(input.keySelect);
-    if (!Number.isInteger(keyCode) || keyCode < 0) {
-      errors.push("请选择有效的物理按键。");
-    }
+  const warnings = [];
+  let keyCode = input.keySelect === "custom" ? Number(input.keyCodeCustom) : Number(input.keySelect);
+
+  if (isNaN(keyCode) || keyCode < 0) errors.push("按键代码无效。");
+  if (keyCode === 26 && input.behavior === "DOWN") errors.push("不允许拦截电源键按下(DOWN)事件。");
+
+  let durationMs = ["LONG_PRESS", "LONG_PRESS_RELEASE", "COMBO_LONG_PRESS"].includes(input.behavior) ? Number(input.durationMs) : 0;
+  if (durationMs < 0) errors.push("閾值不能為負。");
+
+  let comboKeyCode = ["COMBO_DOWN", "COMBO_LONG_PRESS"].includes(input.behavior) ? Number(input.comboKeyCode) : 0;
+  if (comboKeyCode === keyCode && comboKeyCode !== 0) errors.push("組合鍵不能相同。");
+
+  let action = { type: input.actionType };
+  if (input.actionType === "run_shell") action.command = input.command.trim();
+  else if (input.actionType === "send_key") action.keyCode = Number(input.sendKeyCode);
+  else if (input.actionType === "launch_intent") {
+    try { action.intent = JSON.parse(input.intentJson); } catch (e) { errors.push("Intent JSON 格式错误。"); }
   }
 
-  const behavior = input.behavior;
-  if (!["DOWN", "UP", "LONG_PRESS", "LONG_PRESS_RELEASE", "DOUBLE_PRESS", "COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior)) {
-    errors.push("请选择有效的触发行为。");
-  }
-
-  // Bug 5 修復：阻止電源鍵 DOWN 規則
-  // README 規定：電源鍵的 DOWN 事件永不攔截，確保設備能正常喚醒
-  if (keyCode === 26 && behavior === "DOWN") {
-    errors.push("电源键的 DOWN 行为不允许配置，以确保设备能正常唤醒。");
-  }
-
-  let durationMs = Number(input.durationMs || 0);
-  if (["LONG_PRESS", "LONG_PRESS_RELEASE", "COMBO_LONG_PRESS"].includes(behavior)) {
-    if (!Number.isFinite(durationMs) || durationMs <= 0) {
-      errors.push("长按阈值必须大于 0。");
-    }
-  } else {
-    durationMs = 0;
-  }
-
-  let comboKeyCode = 0;
-  if (["COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior)) {
-    comboKeyCode = Number(input.comboKeyCode);
-    if (!Number.isInteger(comboKeyCode) || comboKeyCode < 0) {
-      errors.push("组合键必须是有效的按键代码。");
-    }
-    if (comboKeyCode === keyCode) {
-      errors.push("组合键不能与主按键相同。");
-    }
-  }
-
-  const actionType = input.actionType;
-  let action = null;
-  if (actionType === "run_shell") {
-    const command = (input.command || "").trim();
-    if (!command) {
-      errors.push("Shell 命令不能为空。");
-    } else if (command.length > 256) {
-      errors.push("命令过长（>256 字符）。");
-    } else {
-      action = { type: "run_shell", command };
-    }
-  } else if (actionType === "send_key") {
-    const sendKeyCode = Number(input.sendKeyCode);
-    if (!Number.isInteger(sendKeyCode) || sendKeyCode < 0) {
-      errors.push("发送按键的 keyCode 必须是非负整数。");
-    } else {
-      action = { type: "send_key", keyCode: sendKeyCode };
-    }
-  } else if (actionType === "launch_intent") {
-    const raw = (input.intentJson || "").trim();
-    if (!raw) {
-      errors.push("Intent JSON 不能为空。");
-    } else {
-      try {
-        const intent = JSON.parse(raw);
-        if (typeof intent !== "object" || intent == null) {
-          errors.push("Intent JSON 必须是对象。");
-        } else {
-          action = { type: "launch_intent", intent };
-        }
-      } catch (e) {
-        errors.push("Intent JSON 格式不正确。");
-      }
-    }
-  } else {
-    errors.push("请选择有效的动作类型。");
-  }
-
-  // 優化 4：規則衝突檢測
-  // 檢查是否存在同一按鍵的 UP + DOUBLE_PRESS 衝突
-  if (errors.length === 0 && config && config.rules) {
-    const conflictBehaviors = ["UP", "DOUBLE_PRESS"];
-    if (conflictBehaviors.includes(behavior)) {
-      const otherBehavior = behavior === "UP" ? "DOUBLE_PRESS" : "UP";
-      const hasConflict = config.rules.some((r, idx) => {
-        // 編輯模式下排除自己
-        if (editingIndex !== null && idx === editingIndex) return false;
-        return r.keyCode === keyCode && r.behavior === otherBehavior;
-      });
-      if (hasConflict) {
-        warnings.push(`⚠️ 同一按键同时配置 UP 和 DOUBLE_PRESS 可能导致双击时先触发单击。`);
-      }
-    }
-  }
-
-  return {
-    ok: errors.length === 0,
-    errors,
-    warnings,  // 新增警告返回
-    rule: errors.length
-      ? null
-      : {
-        keyCode,
-        behavior,
-        durationMs,
-        comboKeyCode,
-        action,
-      },
-  };
+  return { ok: errors.length === 0, errors, rule: { keyCode, behavior: input.behavior, durationMs, comboKeyCode, action } };
 }
 
 async function saveToDisk() {
   if (!config) return;
-  config.doublePressIntervalMs = Number(doubleIntervalEl.value) || 300;
-  config.longPressMinMs = Number(longPressMinEl.value) || 500;
-
-  const payload = JSON.stringify(config, null, 2);
-
   try {
     setStatus("正在保存...");
-    await UnifiedBridge.save(payload);
-    setStatus("已保存配置");
+    await UnifiedBridge.save(JSON.stringify(config, null, 2));
+    setStatus("已保存到系统");
   } catch (err) {
-    setStatus(`保存失败：${err.message}`);
+    setStatus(`保存失败: ${err.message}`);
   }
 }
 
-// Event bindings
-document.getElementById("btnLoad").addEventListener("click", loadRules);
-document.getElementById("btnReload").addEventListener("click", loadRules);
-document.getElementById("btnSave").addEventListener("click", saveToDisk);
-document.getElementById("btnDefault").addEventListener("click", async () => {
-  config = await fetchDefaultConfig();
-  render();
-  setStatus("已载入默认模板。");
-});
-document.getElementById("btnAddNew").addEventListener("click", () => resetForm());
-document.getElementById("btnCancel").addEventListener("click", () => resetForm());
+// Events
+document.getElementById("btnSettings").onclick = () => showModal(modalSettings);
+document.getElementById("btnAddNew").onclick = () => { resetForm(); showModal(modalEditor); };
+document.getElementById("btnGlobalSave").onclick = saveToDisk;
+document.querySelectorAll(".btn-close, .btn-secondary").forEach(b => b.onclick = () => { hideModal(modalSettings); hideModal(modalEditor); });
 
-ruleListEl.addEventListener("click", (e) => {
-  const editIdx = e.target.getAttribute("data-edit");
-  const delIdx = e.target.getAttribute("data-delete");
-  if (editIdx !== null) {
-    const idx = Number(editIdx);
-    const rule = config.rules[idx];
-    if (rule) fillForm(rule, idx);
-  }
-  if (delIdx !== null) {
-    const idx = Number(delIdx);
-    config.rules.splice(idx, 1);
-    renderRules();
-    resetForm();
-  }
-});
+document.getElementById("btnApplySettings").onclick = () => {
+  config.doublePressIntervalMs = Number(doubleIntervalEl.value);
+  config.longPressMinMs = Number(longPressMinEl.value);
+  hideModal(modalSettings);
+  setStatus("本地配置已更新（未保存到磁碟）");
+};
 
-form.addEventListener("submit", (e) => {
+ruleListEl.onclick = (e) => {
+  const btn = e.target.closest("button");
+  if (!btn) return;
+  const editIdx = btn.dataset.edit;
+  const delIdx = btn.dataset.delete;
+  if (editIdx !== undefined) {
+    fillForm(config.rules[Number(editIdx)], Number(editIdx));
+    showModal(modalEditor);
+  } else if (delIdx !== undefined) {
+    if (confirm("确定删除此规则？")) {
+      config.rules.splice(Number(delIdx), 1);
+      renderRules();
+    }
+  }
+};
+
+form.onsubmit = (e) => {
   e.preventDefault();
-  formErrorEl.textContent = "";
-  const { ok, errors, warnings, rule } = validateRule({
-    keySelect: keySelectEl.value,
-    keyCodeCustom: keyCodeCustomEl.value,
-    behavior: behaviorEl.value,
-    durationMs: durationEl.value,
-    comboKeyCode: comboKeySelectEl.value,
-    actionType: actionTypeEl.value,
-    command: commandEl.value,
-    sendKeyCode: sendKeyCodeEl.value,
-    intentJson: intentJsonEl.value,
+  const res = validateRule({
+    keySelect: keySelectEl.value, keyCodeCustom: keyCodeCustomEl.value,
+    behavior: behaviorEl.value, durationMs: durationEl.value,
+    comboKeyCode: comboKeySelectEl.value, actionType: actionTypeEl.value,
+    command: commandEl.value, sendKeyCode: sendKeyCodeEl.value, intentJson: intentJsonEl.value
   });
-  if (!ok) {
-    formErrorEl.textContent = errors.join(" ");
-    return;
-  }
-  // 如果有警告，顯示但不阻止保存
-  if (warnings && warnings.length > 0) {
-    alert(warnings.join("\n"));
-  }
-
-  if (editingIndex === null) {
-    config.rules.push(rule);
-  } else {
-    config.rules[editingIndex] = rule;
-  }
+  if (!res.ok) { formErrorEl.textContent = res.errors.join(" "); return; }
+  if (editingIndex === null) config.rules.push(res.rule);
+  else config.rules[editingIndex] = res.rule;
+  hideModal(modalEditor);
   renderRules();
-  resetForm();
-});
+};
 
-// Init and load
+keySelectEl.onchange = toggleCustomKey;
+actionTypeEl.onchange = toggleActionFields;
+behaviorEl.onchange = toggleComboKeyField;
+
+function toggleCustomKey() { keyCodeCustomEl.classList.toggle("hidden", keySelectEl.value !== "custom"); }
+function toggleComboKeyField() { labelComboKeyEl.classList.toggle("hidden", !["COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behaviorEl.value)); }
+
 loadRules();
-
-keySelectEl.addEventListener("change", toggleCustomKey);
-actionTypeEl.addEventListener("change", toggleActionFields);
-behaviorEl.addEventListener("change", toggleComboKeyField);
-
-function toggleCustomKey() {
-  const isCustom = keySelectEl.value === "custom";
-  keyCodeCustomEl.classList.toggle("hidden", !isCustom);
-  keyCodeCustomEl.required = isCustom;
-}
-
-function toggleComboKeyField() {
-  const behavior = behaviorEl.value;
-  const needsCombo = ["COMBO_DOWN", "COMBO_LONG_PRESS"].includes(behavior);
-  labelComboKeyEl.classList.toggle("hidden", !needsCombo);
-  comboKeySelectEl.required = needsCombo;
-}
