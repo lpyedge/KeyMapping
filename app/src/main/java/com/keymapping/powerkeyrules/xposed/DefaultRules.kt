@@ -1,6 +1,5 @@
 package com.keymapping.powerkeyrules.xposed
 
-import android.content.Intent
 import android.view.KeyEvent
 import com.keymapping.powerkeyrules.model.IntentSpec
 import com.keymapping.powerkeyrules.model.KeyAction
