@@ -54,6 +54,9 @@ app-debug-unsigned.apk
 *.keystore
 !debug.keystore
 
+# Allow committing the fallback Modern Xposed AAR used for offline/CI builds
+!app/libs/Modern_Xposed_API-29.aar
+
 # Crashlytics
 com_crashlytics_export_strings.xml
 crashlytics.properties

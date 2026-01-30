@@ -69,14 +69,27 @@ dependencies {
     // Modern Xposed API (libxposed) - 需要 LSPosed 1.9.1+
     // API 文檔：https://libxposed.github.io/api/
     // 優先從 JitPack 下載，若失敗則使用本地 AAR (app/libs/Modern_Xposed_API-29.aar)
-    compileOnly("io.github.libxposed:api:29") {
-        // 如果 JitPack 下載失敗，Gradle 會自動 fallback 到 flatDir
+    // Prefer resolving the Modern Xposed API from remote (JitPack).
+    // If remote resolution fails at build time, fall back to the local AAR (if present).
+    def libxposedDep = "io.github.libxposed:api:29"
+    compileOnly(libxposedDep)
+
+    def localAar = file('libs/Modern_Xposed_API-29.aar')
+    if (localAar.exists()) {
+        // Create a lightweight configuration to check whether the remote artifact can be resolved.
+        // If resolution fails, add the local AAR as a compileOnly fallback.
+        def checkConf = configurations.detachedConfiguration(dependencies.create(libxposedDep))
+        try {
+            checkConf.resolve()
+            // remote resolved successfully -> no action required
+        } catch (Exception e) {
+            // remote resolution failed -> use local AAR fallback
+            compileOnly files(localAar)
+            logger.lifecycle("[build.gradle] Remote libxposed/api:29 resolution failed; using local AAR fallback: ${localAar}")
+        }
+    } else {
+        // local AAR not present; rely on remote resolution
     }
-    // Fallback: 本地 AAR 文件
-    compileOnly files('libs/Modern_Xposed_API-29.aar')
-    
-    implementation "org.jetbrains.kotlin:kotlin-stdlib:$kotlin_version"
-}
 
 // Ensure app/src/main/assets/webui is always in sync with root webui/ directory
 task syncWebUiAssets(type: Copy) {
