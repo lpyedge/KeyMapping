@@ -126,100 +126,89 @@ class PowerKeyModule(
             // 遞歸防護：最近執行的 keyCode+action 時間戳
             private val recentDispatch = java.util.concurrent.ConcurrentHashMap<String, Long>()
             private const val REENTRY_GUARD_MS = 100L
-
-            /**
-             * Hook 前置回調
-             * @param callback 提供 args、thisObject、returnAndSkip() 等方法
-             */
-            @JvmStatic
-            fun before(callback: XposedInterface.BeforeHookCallback<java.lang.reflect.Method>) {
-                try {
-                    val args = callback.args
-                    val event = args.firstOrNull { it is KeyEvent } as? KeyEvent ?: return
-
-                    // === 安全過濾 ===
-                    
-                    // 1. 虛擬按鍵源忽略（防止 input keyevent 遞歸）
-                    if (event.deviceId < 0) return
-
-                    // 2. 電源鍵 DOWN 永不攔截（確保設備能喚醒）
-                    if (event.keyCode == KeyEvent.KEYCODE_POWER && event.action == KeyEvent.ACTION_DOWN) {
-                        // 但仍需追蹤狀態，以便計算長按時長
-                        KeyStateTracker.onKeyEvent(event)
-                        return
-                    }
-
-                    // 3. 遞歸防護：同一 keyCode+action 在短時間內重複觸發則忽略
-                    val key = "${event.keyCode}:${event.action}"
-                    val now = android.os.SystemClock.uptimeMillis()  // 使用 uptimeMillis 而非 eventTime
-                    val lastTime = recentDispatch[key] ?: 0L
-                    if (now - lastTime < REENTRY_GUARD_MS) {
-                        return
-                    }
-
-                    // === 規則處理 ===
-                    
-                    // 觸發配置刷新檢查
-                    ModernRuleStore.maybeReload()
-
-                    // 追蹤按鍵狀態
-                    val gesture = KeyStateTracker.onKeyEvent(event) ?: return
-
-                    // 只處理非長按事件（LONG_PRESS 已在 KeyStateTracker 內部通過定時器觸發）
-                    // COMBO_LONG_PRESS 也在定時器中觸發，這裡不處理
-                    if (gesture.behavior == KeyBehavior.LONG_PRESS || 
-                        gesture.behavior == KeyBehavior.COMBO_LONG_PRESS) {
-                        return
-                    }
-
-                    // 匹配规则（DOWN/UP/DOUBLE_PRESS/LONG_PRESS_RELEASE/COMBO_DOWN）
-                    val rule = if (gesture.behavior == KeyBehavior.COMBO_DOWN) {
-                        // 组合键需要匹配两个 keyCode
-                        KeyRuleEngine.matchCombo(gesture.firstKeyCode, gesture.secondKeyCode, gesture.behavior)
-                    } else {
-                        KeyRuleEngine.match(event.keyCode, gesture.behavior, gesture.durationMs)
-                    } ?: return
-
-                    // 記錄本次分發時間（遞歸防護）
-                    recentDispatch[key] = now
-                    
-                    // 清理過期記錄
-                    if (recentDispatch.size > 20) {
-                        val cutoff = now - 5000
-                        recentDispatch.entries.removeIf { it.value < cutoff }
-                    }
-
-                    // 執行動作
-                    ActionExecutor.execute(rule.action)
-
-                    // Safety: never skip POWER key handling; skipping policy processing can break power menu/reboot/shutdown flows.
-                    if (event.keyCode != KeyEvent.KEYCODE_POWER) {
-                        callback.returnAndSkip(0)
-                    }
-
-                } catch (t: Throwable) {
-                    // 全局異常捕獲，防止 system_server 崩潰
-                    PowerKeyModule.getXposed()?.log("Hook error: ${t.message}")
-                }
-            }
-
-            /**
-             * Hook 後置回調（可選）
-             * 本模組不需要後置處理，但提供空實現以符合接口規範
-             */
-            @JvmStatic
-            fun after(callback: XposedInterface.AfterHookCallback<java.lang.reflect.Method>) {
-                // 不需要後置處理
-            }
         }
-        
-        // 實例方法：把調用轉發到 companion object，因為 API 要求實例 Hooker
+
+        /**
+         * Hook 前置回調
+         * @param callback 提供 args、thisObject、returnAndSkip() 等方法
+         */
         override fun before(callback: XposedInterface.BeforeHookCallback<java.lang.reflect.Method>) {
-            Companion.before(callback)
+            try {
+                val args = callback.args
+                val event = args.firstOrNull { it is KeyEvent } as? KeyEvent ?: return
+
+                // === 安全過濾 ===
+                
+                // 1. 虛擬按鍵源忽略（防止 input keyevent 遞歸）
+                if (event.deviceId < 0) return
+
+                // 2. 電源鍵 DOWN 永不攔截（確保設備能喚醒）
+                if (event.keyCode == KeyEvent.KEYCODE_POWER && event.action == KeyEvent.ACTION_DOWN) {
+                    // 但仍需追蹤狀態，以便計算長按時長
+                    KeyStateTracker.onKeyEvent(event)
+                    return
+                }
+
+                // 3. 遞歸防護：同一 keyCode+action 在短時間內重複觸發則忽略
+                val key = "${event.keyCode}:${event.action}"
+                val now = android.os.SystemClock.uptimeMillis()  // 使用 uptimeMillis 而非 eventTime
+                val lastTime = recentDispatch[key] ?: 0L
+                if (now - lastTime < REENTRY_GUARD_MS) {
+                    return
+                }
+
+                // === 規則處理 ===
+                
+                // 觸發配置刷新檢查
+                ModernRuleStore.maybeReload()
+
+                // 追蹤按鍵狀態
+                val gesture = KeyStateTracker.onKeyEvent(event) ?: return
+
+                // 只處理非長按事件（LONG_PRESS 已在 KeyStateTracker 內部通過定時器觸發）
+                // COMBO_LONG_PRESS 也在定時器中觸發，這裡不處理
+                if (gesture.behavior == KeyBehavior.LONG_PRESS || 
+                    gesture.behavior == KeyBehavior.COMBO_LONG_PRESS) {
+                    return
+                }
+
+                // 匹配规则（DOWN/UP/DOUBLE_PRESS/LONG_PRESS_RELEASE/COMBO_DOWN）
+                val rule = if (gesture.behavior == KeyBehavior.COMBO_DOWN) {
+                    // 组合键需要匹配两个 keyCode
+                    KeyRuleEngine.matchCombo(gesture.firstKeyCode, gesture.secondKeyCode, gesture.behavior)
+                } else {
+                    KeyRuleEngine.match(event.keyCode, gesture.behavior, gesture.durationMs)
+                } ?: return
+
+                // 記錄本次分發時間（遞歸防護）
+                recentDispatch[key] = now
+                
+                // 清理過期記錄
+                if (recentDispatch.size > 20) {
+                    val cutoff = now - 5000
+                    recentDispatch.entries.removeIf { it.value < cutoff }
+                }
+
+                // 執行動作
+                ActionExecutor.execute(rule.action)
+
+                // Safety: never skip POWER key handling; skipping policy processing can break power menu/reboot/shutdown flows.
+                if (event.keyCode != KeyEvent.KEYCODE_POWER) {
+                    callback.returnAndSkip(0)
+                }
+
+            } catch (t: Throwable) {
+                // 全局異常捕獲，防止 system_server 崩潰
+                PowerKeyModule.getXposed()?.log("Hook error: ${t.message}")
+            }
         }
 
+        /**
+         * Hook 後置回調（可選）
+         * 本模組不需要後置處理，但提供空實現以符合接口規範
+         */
         override fun after(callback: XposedInterface.AfterHookCallback<java.lang.reflect.Method>) {
-            Companion.after(callback)
+            // 不需要後置處理
         }
     }
 }
