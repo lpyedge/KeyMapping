@@ -119,7 +119,7 @@ jobs:
         set -euo pipefail
 
         # 判斷條件：如果有传入 keystore 的 secret（例如 KEYSTORE_BASE64）或仓库内存在 keystore 文件，则开启 release 构建
-        if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ] || [ -f "app/libs/Modern_Xposed_API-29.aar" ] || [ -f "app/keystore.jks" ]; then
+        if [ -n "${{ secrets.KEYSTORE_BASE64 }}" ] || [ -f "app/keystore.jks" ]; then
           echo "signing=true" >> $GITHUB_OUTPUT
           echo "✅ Release signing assets available"
         else
