@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<resources>
-    <!-- Xposed 模組作用域：指定要 Hook 的進程 -->
-    <string-array name="xposed_scope">
-        <item>android</item>
-    </string-array>
-</resources>
