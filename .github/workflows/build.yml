@@ -1,59 +1,250 @@
-name: Build Android Module
+name: Publish Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version number (e.g. 0.5.0, accepts optional v prefix)"
+        required: true
+        type: string
+      release_name:
+        description: "Release title (optional, defaults to tag)"
+        required: false
+        type: string
+      body:
+        description: "Release notes (optional, defaults to latest commit message)"
+        required: false
+        type: string
+      prerelease:
+        description: "Mark as prerelease"
+        required: false
+        type: boolean
+        default: false
+      clean_history:
+        description: "Delete old releases and tags before publishing"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
 
 env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
+  package-and-release:
     runs-on: ubuntu-latest
-
+    env:
+      GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      TARGET: aarch64-linux-android
     steps:
-    - uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+          fetch-depth: 0
+          ref: ${{ github.event.repository.default_branch }}
 
-    - name: Install Rust
-      uses: actions-rs/toolchain@v1
-      with:
-        toolchain: stable
-        target: aarch64-linux-android
-        override: true
+      - name: Validate and normalize version input
+        id: meta
+        env:
+          VERSION_INPUT: ${{ github.event.inputs.version }}
+          RELEASE_NAME_INPUT: ${{ github.event.inputs.release_name }}
+        run: |
+          set -euo pipefail
 
-    - name: Install Cross
-      run: cargo install cross
+          version="${VERSION_INPUT#v}"
+          if [ -z "$version" ]; then
+            echo "Version input is required." >&2
+            exit 1
+          fi
+          if ! echo "$version" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "Invalid version: $version (expected x.y.z)" >&2
+            exit 1
+          fi
 
-    - name: Build Release
-      run: cross build --target aarch64-linux-android --release
+          tag="v${version}"
+          zip_name="rust_keymapper-${version}.zip"
+          release_name="${RELEASE_NAME_INPUT:-$tag}"
 
-    - name: Prepare Package
-      run: |
-        mkdir -p dist/rust_keymapper/common
-        mkdir -p dist/rust_keymapper/config
-        mkdir -p dist/rust_keymapper/webroot
-        
-        # Copy binary
-        cp target/aarch64-linux-android/release/keymapper_d dist/rust_keymapper/
-        
-        # Copy scripts
-        cp module/module.prop dist/rust_keymapper/
-        cp module/action.sh dist/rust_keymapper/
-        cp module/service.sh dist/rust_keymapper/
-        cp module/uninstall.sh dist/rust_keymapper/
-        chmod 755 dist/rust_keymapper/action.sh
-        chmod 755 dist/rust_keymapper/service.sh
-        chmod 755 dist/rust_keymapper/uninstall.sh
-        
-        # Copy config
-        cp config/config.default.yaml dist/rust_keymapper/config/
-        
-        # Copy WebRoot
-        cp -r webroot/* dist/rust_keymapper/webroot/
-        
-    - name: Zip Module
-      run: |
-        cd dist
-        zip -r rust_keymapper_v0.5.0.zip rust_keymapper
+          {
+            echo "version=${version}"
+            echo "tag=${tag}"
+            echo "zip_name=${zip_name}"
+            echo "release_name=${release_name}"
+          } >> "$GITHUB_OUTPUT"
 
-    - name: Upload Artifact
-      uses: actions/upload-artifact@v4
-      with:
-        name: magisk-module
-        path: dist/rust_keymapper_v0.5.0.zip
+      - name: Clean old releases and tags
+        if: ${{ github.event.inputs.clean_history == 'true' }}
+        env:
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          echo "Cleaning old releases and tags in ${REPO}..."
+
+          gh release list --limit 200 --json tagName --jq '.[].tagName' | while read -r tag; do
+            [ -z "$tag" ] && continue
+            gh release delete "$tag" --yes --cleanup-tag || true
+          done
+
+          git tag -l | while read -r tag; do
+            [ -z "$tag" ] && continue
+            git push origin --delete "$tag" || true
+            git tag -d "$tag" || true
+          done
+
+      - name: Update module metadata and update manifest
+        id: metadata
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+          TAG: ${{ steps.meta.outputs.tag }}
+          ZIP_NAME: ${{ steps.meta.outputs.zip_name }}
+          BODY: ${{ github.event.inputs.body }}
+          REPO: ${{ github.repository }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
+        run: |
+          set -euo pipefail
+
+          prop_file="module/module.prop"
+          [ -f "$prop_file" ] || { echo "Missing $prop_file" >&2; exit 1; }
+
+          current_vc="$(grep -E '^versionCode=' "$prop_file" | tail -n1 | cut -d= -f2 || true)"
+          current_vc="${current_vc:-0}"
+          if ! echo "$current_vc" | grep -qE '^[0-9]+$'; then
+            echo "Invalid versionCode in module.prop: $current_vc" >&2
+            exit 1
+          fi
+          new_vc=$((current_vc + 1))
+
+          owner="$(echo "$REPO" | cut -d/ -f1)"
+          repo_name="$(echo "$REPO" | cut -d/ -f2)"
+          update_json_url="https://raw.githubusercontent.com/${owner}/${repo_name}/${DEFAULT_BRANCH}/webroot/latest.json"
+          changelog_url="https://raw.githubusercontent.com/${owner}/${repo_name}/${DEFAULT_BRANCH}/webroot/changelog.md"
+          zip_url="https://github.com/${REPO}/releases/download/${TAG}/${ZIP_NAME}"
+
+          if grep -q '^version=' "$prop_file"; then
+            sed -i -E "s/^version=.*/version=v${VERSION}/" "$prop_file"
+          else
+            echo "version=v${VERSION}" >> "$prop_file"
+          fi
+          if grep -q '^versionCode=' "$prop_file"; then
+            sed -i -E "s/^versionCode=.*/versionCode=${new_vc}/" "$prop_file"
+          else
+            echo "versionCode=${new_vc}" >> "$prop_file"
+          fi
+          if grep -q '^updateJson=' "$prop_file"; then
+            sed -i -E "s|^updateJson=.*|updateJson=${update_json_url}|" "$prop_file"
+          else
+            echo "updateJson=${update_json_url}" >> "$prop_file"
+          fi
+          if grep -q '^update_url=' "$prop_file"; then
+            sed -i -E "s|^update_url=.*|update_url=${update_json_url}|" "$prop_file"
+          else
+            echo "update_url=${update_json_url}" >> "$prop_file"
+          fi
+
+          mkdir -p webroot
+          if [ -n "${BODY}" ]; then
+            printf "%s\n" "${BODY}" > webroot/changelog.md
+          else
+            git log -1 --pretty=%B > webroot/changelog.md
+          fi
+
+          export VERSION TAG ZIP_NAME ZIP_URL="${zip_url}" CHANGELOG_URL="${changelog_url}" VERSION_CODE="${new_vc}"
+          python3 - <<'PY'
+import json
+import os
+
+data = {
+    "id": "rust_keymapper",
+    "name": "Rust Keymapper",
+    "version": f"v{os.environ['VERSION']}",
+    "versionCode": int(os.environ["VERSION_CODE"]),
+    "zipUrl": os.environ["ZIP_URL"],
+    "zip_url": os.environ["ZIP_URL"],
+    "downloadUrl": os.environ["ZIP_URL"],
+    "download_url": os.environ["ZIP_URL"],
+    "changelog": os.environ["CHANGELOG_URL"],
+}
+
+with open("webroot/latest.json", "w", encoding="utf-8") as f:
+    json.dump(data, f, ensure_ascii=False, indent=2)
+    f.write("\n")
+PY
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add "$prop_file" webroot/latest.json webroot/changelog.md
+          git commit -m "chore(release): ${TAG}" || echo "No metadata changes to commit"
+          git push origin HEAD:${DEFAULT_BRANCH}
+
+          echo "version_code=${new_vc}" >> "$GITHUB_OUTPUT"
+          echo "update_json_url=${update_json_url}" >> "$GITHUB_OUTPUT"
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ env.TARGET }}
+
+      - name: Install cross
+        uses: taiki-e/install-action@cross
+
+      - name: Build Android binary
+        run: cross build --target ${{ env.TARGET }} --release --locked
+
+      - name: Prepare Magisk module package
+        env:
+          ZIP_NAME: ${{ steps.meta.outputs.zip_name }}
+        run: |
+          set -euo pipefail
+          pkg_root="dist/pkgroot"
+          rm -rf dist
+          mkdir -p "${pkg_root}/config" "${pkg_root}/webroot"
+
+          cp "target/${TARGET}/release/keymapper_d" "${pkg_root}/"
+          cp module/module.prop "${pkg_root}/module.prop"
+          cp module/action.sh "${pkg_root}/action.sh"
+          cp module/service.sh "${pkg_root}/service.sh"
+          cp module/uninstall.sh "${pkg_root}/uninstall.sh"
+          if [ -d module/common ]; then
+            cp -r module/common "${pkg_root}/common"
+          fi
+
+          cp config/config.default.yaml "${pkg_root}/config/"
+          cp -r webroot/* "${pkg_root}/webroot/"
+
+          chmod 755 "${pkg_root}/action.sh" "${pkg_root}/service.sh" "${pkg_root}/uninstall.sh" "${pkg_root}/keymapper_d"
+
+          (
+            cd "${pkg_root}"
+            zip -r "../${ZIP_NAME}" .
+          )
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: magisk-module-${{ steps.meta.outputs.version }}
+          path: dist/${{ steps.meta.outputs.zip_name }}
+
+      - name: Create GitHub release
+        env:
+          TAG: ${{ steps.meta.outputs.tag }}
+          RELEASE_NAME: ${{ steps.meta.outputs.release_name }}
+          BODY: ${{ github.event.inputs.body }}
+          PRERELEASE: ${{ github.event.inputs.prerelease }}
+          ZIP_NAME: ${{ steps.meta.outputs.zip_name }}
+        run: |
+          set -euo pipefail
+
+          notes="${BODY}"
+          if [ -z "${notes}" ]; then
+            notes="$(cat webroot/changelog.md)"
+          fi
+
+          cmd=(gh release create "${TAG}" --title "${RELEASE_NAME}" --notes "${notes}")
+          if [ "${PRERELEASE}" = "true" ]; then
+            cmd+=(--prerelease)
+          fi
+          cmd+=("dist/${ZIP_NAME}")
+          "${cmd[@]}"

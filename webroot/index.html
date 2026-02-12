@@ -1,11 +1,13 @@
 ﻿<!doctype html>
 <html lang="zh-CN">
+
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>PowerKeyRules WebUI</title>
   <link rel="stylesheet" href="style.css" />
 </head>
+
 <body>
   <main class="shell">
     <section class="card">
@@ -17,8 +19,12 @@
           <p id="deviceInfo" class="subtitle"></p>
         </div>
         <div class="header-actions">
+          <button id="btnKeySetup" class="btn-secondary" title="按键设置向导">按键设置</button>
           <button id="btnSettings" class="btn-icon" title="全局设置">
-            <svg viewBox="0 0 24 24" width="24" height="24"><path fill="currentColor" d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.35 19.43,11.03L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.47,5.32 14.87,5.07L14.49,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.51,2.42L9.13,5.07C8.53,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11.03C4.53,11.35 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.22,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.95C7.96,18.34 8.53,18.68 9.13,18.93L9.51,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.49,21.58L14.87,18.93C15.47,18.68 16.04,18.34 16.56,17.95L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z" /></svg>
+            <svg viewBox="0 0 24 24" width="24" height="24">
+              <path fill="currentColor"
+                d="M12,15.5A3.5,3.5 0 0,1 8.5,12A3.5,3.5 0 0,1 12,8.5A3.5,3.5 0 0,1 15.5,12A3.5,3.5 0 0,1 12,15.5M19.43,12.97C19.47,12.65 19.5,12.33 19.5,12C19.5,11.67 19.47,11.35 19.43,11.03L21.54,9.37C21.73,9.22 21.78,8.95 21.66,8.73L19.66,5.27C19.54,5.05 19.27,4.96 19.05,5.05L16.56,6.05C16.04,5.66 15.47,5.32 14.87,5.07L14.49,2.42C14.46,2.18 14.25,2 14,2H10C9.75,2 9.54,2.18 9.51,2.42L9.13,5.07C8.53,5.32 7.96,5.66 7.44,6.05L4.95,5.05C4.73,4.96 4.46,5.05 4.34,5.27L2.34,8.73C2.21,8.95 2.27,9.22 2.46,9.37L4.57,11.03C4.53,11.35 4.5,11.67 4.5,12C4.5,12.33 4.53,12.65 4.57,12.97L2.46,14.63C2.27,14.78 2.22,15.05 2.34,15.27L4.34,18.73C4.46,18.95 4.73,19.03 4.95,18.95L7.44,17.95C7.96,18.34 8.53,18.68 9.13,18.93L9.51,21.58C9.54,21.82 9.75,22 10,22H14C14.25,22 14.46,21.82 14.49,21.58L14.87,18.93C15.47,18.68 16.04,18.34 16.56,17.95L19.05,18.95C19.27,19.03 19.54,18.95 19.66,18.73L21.66,15.27C21.78,15.05 21.73,14.78 21.54,14.63L19.43,12.97Z" />
+            </svg>
           </button>
         </div>
       </header>
@@ -75,6 +81,7 @@
                   <div class="key-row">
                     <select id="keySelect"></select>
                     <input id="keyCodeCustom" type="number" min="0" placeholder="其他键码" class="hidden" />
+                    <button type="button" class="btn-small" onclick="startKeyWizard('main')" title="学习按键">🔍</button>
                   </div>
                 </label>
                 <label>触发行为
@@ -89,7 +96,10 @@
                   </select>
                 </label>
                 <label id="labelComboKey" class="hidden">组合键（第二个键）
-                  <select id="comboKeySelect"></select>
+                  <div class="key-row">
+                    <select id="comboKeySelect"></select>
+                    <button type="button" class="btn-small" onclick="startKeyWizard('combo')" title="学习按键">🔍</button>
+                  </div>
                 </label>
               </div>
 
@@ -137,7 +147,8 @@
                 </label>
 
                 <label id="fieldShell" class="hidden">Shell 命令
-                  <input id="command" type="text" placeholder='例如: input keyevent 223 或 am start -a android.intent.action.ASSIST' />
+                  <input id="command" type="text"
+                    placeholder='例如: input keyevent 223 或 am start -a android.intent.action.ASSIST' />
                 </label>
 
                 <label id="fieldSendKey" class="hidden">要发送的 keyCode
@@ -159,7 +170,8 @@
                       <input id="intentData" type="text" placeholder="如: myapp://path" />
                     </label>
                     <label>Categories (逗号分隔)
-                      <input id="intentCategory" type="text" placeholder="如: android.intent.category.DEFAULT,android.intent.category.BROWSABLE" />
+                      <input id="intentCategory" type="text"
+                        placeholder="如: android.intent.category.DEFAULT,android.intent.category.BROWSABLE" />
                     </label>
                     <label>Extras (每行 key=value)
                       <textarea id="intentExtras" rows="4" placeholder="foo=bar&#10;count=3"></textarea>
@@ -177,6 +189,33 @@
           </div>
         </div>
       </div>
+      <div id="keySetupModal" class="modal">
+        <div class="modal-content" style="max-width: 460px;">
+          <header class="modal-header">
+            <h3>Key Setup Wizard</h3>
+            <button id="btnKeySetupCloseX" class="btn-close">&times;</button>
+          </header>
+          <div class="modal-body">
+            <p id="keySetupProgress" class="subtitle">按「開始設定」以逐步學習實體按鍵。</p>
+            <p id="keySetupPrompt" style="margin: 14px 0 0;">尚未開始。</p>
+            <p id="keySetupCountdown" class="hint"></p>
+          </div>
+          <div class="modal-footer">
+            <button id="btnKeySetupStart" class="btn-primary">開始設定</button>
+            <button id="btnKeySetupRetry" class="btn-secondary hidden">重試</button>
+            <button id="btnKeySetupSkip" class="btn-secondary hidden">略過</button>
+            <button id="btnKeySetupClose" class="btn-secondary">關閉</button>
+          </div>
+        </div>
+      </div>
+      <div id="wizardModal" class="modal" style="display: none; align-items: center; justify-content: center;">
+        <div class="modal-content" style="max-width: 400px; text-align: center;">
+          <h3>按键学习模式</h3>
+          <p id="wizardMessage" style="margin: 20px 0; font-size: 1.2em;">准备中...</p>
+          <p id="wizardCountdown" class="hint"></p>
+          <button class="btn-secondary" onclick="cancelWizard()">取消</button>
+        </div>
+      </div>
 
       <pre id="status" class="status">Ready.</pre>
     </section>
@@ -184,4 +223,5 @@
 
   <script src="app.js"></script>
 </body>
+
 </html>

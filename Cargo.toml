@@ -14,14 +14,13 @@ path = "src/cli/main.rs"
 [dependencies]
 # Core
 evdev = "0.12"
-input-linux = "0.5"
 tokio = { version = "1.35", features = ["full"] }
 tokio-util = { version = "0.7", features = ["codec"] }
 
 # HTTP
 axum = "0.7"
 tower = "0.4"
-tower-http = { version = "0.5", features = ["cors", "trace"] }
+tower-http = { version = "0.5", features = ["cors", "trace", "fs"] }
 hyper = { version = "1", features = ["full"] }
 
 # Serialization
@@ -51,6 +50,9 @@ uuid = { version = "1", features = ["v4"] }
 # Performance
 rayon = "1.7"
 ahash = "0.8"
+
+[target.'cfg(any(target_os = "linux", target_os = "android"))'.dependencies]
+input-linux = "0.5"
 
 [dev-dependencies]
 tokio-test = "0.4"

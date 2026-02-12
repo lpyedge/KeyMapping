@@ -45,6 +45,17 @@ const shortPressMinEl = document.getElementById("shortPressMin");
 
 const modalSettings = document.getElementById("modalSettings");
 const modalEditor = document.getElementById("modalEditor");
+const wizardCountdownEl = document.getElementById("wizardCountdown");
+
+const keySetupModalEl = document.getElementById("keySetupModal");
+const keySetupProgressEl = document.getElementById("keySetupProgress");
+const keySetupPromptEl = document.getElementById("keySetupPrompt");
+const keySetupCountdownEl = document.getElementById("keySetupCountdown");
+const btnKeySetupStartEl = document.getElementById("btnKeySetupStart");
+const btnKeySetupRetryEl = document.getElementById("btnKeySetupRetry");
+const btnKeySetupSkipEl = document.getElementById("btnKeySetupSkip");
+const btnKeySetupCloseEl = document.getElementById("btnKeySetupClose");
+const btnKeySetupCloseXEl = document.getElementById("btnKeySetupCloseX");
 
 const FALLBACK_KEY_OPTIONS = [
   { label: "POWER", code: 116 },
@@ -53,6 +64,7 @@ const FALLBACK_KEY_OPTIONS = [
   { label: "HOME", code: 102 },
   { label: "MENU", code: 139 }
 ];
+const KEY_SETUP_SEQUENCE = ["POWER", "VOL_UP", "VOL_DOWN", "HOME", "MENU"];
 
 const COMBO_BEHAVIORS = new Set(["COMBO_CLICK", "COMBO_SHORT_PRESS", "COMBO_LONG_PRESS"]);
 const ALL_BEHAVIORS = new Set([
@@ -108,6 +120,21 @@ const Api = {
   },
   async getApps() {
     const res = await fetch("/api/apps");
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+    return await res.json();
+  },
+  async startLearning() {
+    const res = await fetch("/api/system/learn-start", { method: "POST" });
+    if (!res.ok) {
+      const msg = await res.text();
+      throw new Error(msg || `HTTP ${res.status}`);
+    }
+  },
+  async getLearnResult() {
+    const res = await fetch("/api/system/learn-result");
     if (!res.ok) {
       const msg = await res.text();
       throw new Error(msg || `HTTP ${res.status}`);
@@ -395,7 +422,8 @@ function renderAll() {
 }
 
 function toggleCustomKey() {
-  keyCodeCustomEl.classList.toggle("hidden", keySelectEl.value !== "custom");
+  const isCustom = keySelectEl.value === "custom";
+  keyCodeCustomEl.classList.toggle("hidden", !isCustom);
 }
 
 function toggleBehaviorFields() {
@@ -694,6 +722,7 @@ function useSelectedApp() {
 
 // Events
 document.getElementById("btnSettings").onclick = () => showModal(modalSettings);
+document.getElementById("btnKeySetup").onclick = openKeySetupWizard;
 document.getElementById("btnAddNew").onclick = () => {
   resetForm();
   showModal(modalEditor);
@@ -701,8 +730,13 @@ document.getElementById("btnAddNew").onclick = () => {
 document.getElementById("btnGlobalSave").onclick = saveToDisk;
 document.querySelectorAll(".btn-close").forEach((b) => {
   b.onclick = () => {
-    hideModal(modalSettings);
-    hideModal(modalEditor);
+    const modal = b.closest(".modal");
+    if (!modal) return;
+    if (modal.id === "keySetupModal") {
+      closeKeySetupWizard();
+      return;
+    }
+    hideModal(modal);
   };
 });
 document.getElementById("btnCancel").onclick = () => hideModal(modalEditor);
@@ -780,3 +814,278 @@ behaviorEl.onchange = toggleBehaviorFields;
 actionTypeEl.onchange = toggleActionFields;
 
 loadRules();
+
+let learnPollInterval = null;
+let wizardType = null; // "main" or "combo"
+
+const keySetupState = {
+  active: false,
+  keys: [...KEY_SETUP_SEQUENCE],
+  index: 0
+};
+
+function clearLearnPoll() {
+  if (learnPollInterval) {
+    clearInterval(learnPollInterval);
+    learnPollInterval = null;
+  }
+}
+
+function formatRemain(remainingMs) {
+  if (!Number.isFinite(Number(remainingMs))) return "";
+  const sec = Math.max(0, Math.ceil(Number(remainingMs) / 1000));
+  return `${sec}s`;
+}
+
+async function beginLearnPolling(onUpdate, onCaptured, onTimeout) {
+  await Api.startLearning();
+  clearLearnPoll();
+
+  const pollOnce = async () => {
+    const data = await Api.getLearnResult();
+    if (typeof onUpdate === "function") onUpdate(data);
+
+    if (data.status === "captured") {
+      clearLearnPoll();
+      if (typeof onCaptured === "function") onCaptured(data);
+      return true;
+    }
+    if (data.status === "timeout") {
+      clearLearnPoll();
+      if (typeof onTimeout === "function") onTimeout(data);
+      return true;
+    }
+    return false;
+  };
+
+  const done = await pollOnce();
+  if (done) return;
+  learnPollInterval = setInterval(async () => {
+    try {
+      await pollOnce();
+    } catch (e) {
+      console.error("learn poll error", e);
+      clearLearnPoll();
+    }
+  }, 500);
+}
+
+// --- Single key learn button in rule editor ---
+
+async function startKeyWizard(type) {
+  wizardType = type;
+  const modal = document.getElementById("wizardModal");
+  const msg = document.getElementById("wizardMessage");
+
+  modal.style.display = "flex";
+  msg.textContent = "請按下實體按鍵...";
+  wizardCountdownEl.textContent = "";
+
+  try {
+    await beginLearnPolling(
+      (data) => {
+        if (data.status === "learning") {
+          wizardCountdownEl.textContent = `剩餘 ${formatRemain(data.remainingMs)}`;
+        }
+      },
+      (data) => {
+        const code = Number(data.keyCode);
+        msg.textContent = `已擷取：${code}`;
+        wizardCountdownEl.textContent = "";
+
+        if (wizardType === "main") {
+          applyLearnedKey(code, keySelectEl, keyCodeCustomEl);
+        } else if (wizardType === "combo") {
+          applyLearnedKeyToSelect(code, comboKeySelectEl);
+        }
+
+        setTimeout(() => {
+          modal.style.display = "none";
+        }, 900);
+      },
+      () => {
+        msg.textContent = "逾時，未偵測到按鍵。";
+        wizardCountdownEl.textContent = "";
+        setTimeout(() => {
+          modal.style.display = "none";
+        }, 1400);
+      }
+    );
+  } catch (e) {
+    msg.textContent = `啟動學習失敗：${e.message || e}`;
+    wizardCountdownEl.textContent = "";
+  }
+}
+
+function applyLearnedKey(code, selectEl, customInputEl) {
+  const sCode = String(code);
+  let found = false;
+  for (const opt of selectEl.options) {
+    if (opt.value === sCode) {
+      selectEl.value = sCode;
+      found = true;
+      break;
+    }
+  }
+
+  if (found) {
+    // Trigger change to hide custom input if needed
+    selectEl.dispatchEvent(new Event('change'));
+  } else {
+    // Not found, switch to custom
+    selectEl.value = 'custom';
+    selectEl.dispatchEvent(new Event('change')); // Show custom input
+    if (customInputEl) customInputEl.value = code;
+  }
+}
+
+function applyLearnedKeyToSelect(code, selectEl) {
+  const sCode = String(code);
+  let found = false;
+  for (const opt of selectEl.options) {
+    if (opt.value === sCode) {
+      selectEl.value = sCode;
+      found = true;
+      break;
+    }
+  }
+  if (!found) {
+    // Add temporary option?
+    const opt = document.createElement('option');
+    opt.value = sCode;
+    opt.textContent = `Unknown (${code})`;
+    selectEl.appendChild(opt);
+    selectEl.value = sCode;
+  }
+}
+
+function cancelWizard() {
+  clearLearnPoll();
+  document.getElementById("wizardModal").style.display = "none";
+  wizardCountdownEl.textContent = "";
+}
+
+// --- Key Setup Wizard ---
+
+function resetKeySetupUi() {
+  keySetupProgressEl.textContent = "按「開始設定」以逐步學習實體按鍵。";
+  keySetupPromptEl.textContent = "尚未開始。";
+  keySetupCountdownEl.textContent = "";
+  btnKeySetupStartEl.classList.remove("hidden");
+  btnKeySetupRetryEl.classList.add("hidden");
+  btnKeySetupSkipEl.classList.add("hidden");
+}
+
+function openKeySetupWizard() {
+  if (!config) {
+    setStatus("Config not loaded yet.");
+    return;
+  }
+  keySetupState.active = true;
+  keySetupState.index = 0;
+  keySetupState.keys = [...KEY_SETUP_SEQUENCE];
+  resetKeySetupUi();
+  showModal(keySetupModalEl);
+}
+
+function closeKeySetupWizard() {
+  keySetupState.active = false;
+  clearLearnPoll();
+  hideModal(keySetupModalEl);
+}
+
+function bindLearnedHardwareKey(name, code) {
+  const numericCode = Number(code);
+  if (!Number.isInteger(numericCode) || numericCode < 0) return;
+
+  // Keep one keycode per logical name to keep mapping deterministic.
+  for (const [k, v] of Object.entries(config.hardwareMap)) {
+    if (v === name && Number(k) !== numericCode) {
+      delete config.hardwareMap[k];
+    }
+  }
+  config.hardwareMap[numericCode] = name;
+}
+
+function renderKeySetupProgress() {
+  keySetupProgressEl.textContent = `進度 ${keySetupState.index + 1}/${keySetupState.keys.length}`;
+}
+
+function finishKeySetup() {
+  keySetupState.active = false;
+  keySetupPromptEl.textContent = "設定完成，請按「保存规则」寫入 YAML。";
+  keySetupCountdownEl.textContent = "";
+  btnKeySetupStartEl.classList.add("hidden");
+  btnKeySetupRetryEl.classList.add("hidden");
+  btnKeySetupSkipEl.classList.add("hidden");
+  renderAll();
+  setStatus("Key setup finished. Remember to save config.");
+}
+
+async function runCurrentKeySetupStep() {
+  if (!keySetupState.active) return;
+  if (keySetupState.index >= keySetupState.keys.length) {
+    finishKeySetup();
+    return;
+  }
+
+  const currentName = keySetupState.keys[keySetupState.index];
+  renderKeySetupProgress();
+  keySetupPromptEl.textContent = `請按下 ${currentName}`;
+  keySetupCountdownEl.textContent = "啟動中...";
+  btnKeySetupStartEl.classList.add("hidden");
+  btnKeySetupRetryEl.classList.add("hidden");
+  btnKeySetupSkipEl.classList.add("hidden");
+
+  try {
+    await beginLearnPolling(
+      (data) => {
+        if (data.status === "learning") {
+          keySetupCountdownEl.textContent = `剩餘 ${formatRemain(data.remainingMs)}`;
+        }
+      },
+      (data) => {
+        const code = Number(data.keyCode);
+        bindLearnedHardwareKey(currentName, code);
+        keySetupPromptEl.textContent = `${currentName} = ${code}`;
+        keySetupCountdownEl.textContent = "";
+        keySetupState.index += 1;
+        setTimeout(() => {
+          runCurrentKeySetupStep();
+        }, 500);
+      },
+      () => {
+        keySetupPromptEl.textContent = `${currentName} 學習逾時`;
+        keySetupCountdownEl.textContent = "可選擇重試或略過。";
+        btnKeySetupRetryEl.classList.remove("hidden");
+        btnKeySetupSkipEl.classList.remove("hidden");
+      }
+    );
+  } catch (e) {
+    keySetupPromptEl.textContent = `啟動學習失敗：${e.message || e}`;
+    keySetupCountdownEl.textContent = "";
+    btnKeySetupRetryEl.classList.remove("hidden");
+    btnKeySetupSkipEl.classList.remove("hidden");
+  }
+}
+
+btnKeySetupStartEl.onclick = () => {
+  runCurrentKeySetupStep();
+};
+
+btnKeySetupRetryEl.onclick = () => {
+  runCurrentKeySetupStep();
+};
+
+btnKeySetupSkipEl.onclick = () => {
+  keySetupState.index += 1;
+  runCurrentKeySetupStep();
+};
+
+btnKeySetupCloseEl.onclick = () => {
+  closeKeySetupWizard();
+};
+
+btnKeySetupCloseXEl.onclick = () => {
+  closeKeySetupWizard();
+};

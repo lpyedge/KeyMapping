@@ -13,12 +13,22 @@ use crate::config::{
     Action, BuiltinCommand, Config, IntentSpec, Rule, RuleType,
 };
 use crate::utils::logger::append_webui_log;
+use crate::webui::learn::LearnResultSnapshot;
 use crate::webui::server::AppState;
+use crate::webui::learn::LearnStatus;
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct LearnResultDto {
+    status: String, // "learning", "captured", "timeout", "idle"
+    key_code: Option<u16>,
+    remaining_ms: Option<u32>,
+}
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 #[serde(deny_unknown_fields)]
-struct WebUiConfigDto {
+pub(crate) struct WebUiConfigDto {
     version: u32,
     #[serde(default)]
     device_name: String,
@@ -442,16 +452,16 @@ pub async fn save_config(
             .into_response();
     }
 
-    let mut cfg = state.config.write().await;
-    *cfg = new_config;
-
-    if let Err(e) = cfg.save_to_file(state.config_path.as_ref()) {
+    if let Err(e) = new_config.save_to_file(state.config_path.as_ref()) {
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to save {}: {}", state.config_path.display(), e),
         )
             .into_response();
     }
+
+    let mut cfg = state.config.write().await;
+    *cfg = new_config;
 
     let log_msg = format!(
         "save_config ok: path={}, rules={}, long_press_ms={}, short_press_ms={}, double_tap_ms={}, combination_timeout_ms={}, rule_timeout_ms={}",
@@ -531,3 +541,26 @@ async fn fetch_app_label(package: &str) -> Option<String> {
     None
 }
 
+pub async fn start_learning(State(state): State<AppState>) -> impl IntoResponse {
+    let mut learn = state.learn_state.lock().unwrap();
+    learn.start();
+    (axum::http::StatusCode::OK, "Learning started")
+}
+
+pub async fn get_learn_result(State(state): State<AppState>) -> impl IntoResponse {
+    let mut learn = state.learn_state.lock().unwrap();
+    let LearnResultSnapshot { status, remaining_ms } = learn.snapshot();
+
+    let (status_str, code) = match status {
+        LearnStatus::Idle => ("idle", None),
+        LearnStatus::Learning { .. } => ("learning", None),
+        LearnStatus::Captured { key_code } => ("captured", Some(key_code)),
+        LearnStatus::Timeout => ("timeout", None),
+    };
+
+    Json(LearnResultDto {
+        status: status_str.to_string(),
+        key_code: code,
+        remaining_ms,
+    })
+}

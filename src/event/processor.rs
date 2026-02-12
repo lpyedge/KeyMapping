@@ -1,62 +1,75 @@
 use anyhow::Result;
-use std::sync::Arc;
-use tokio::sync::{RwLock, Mutex};
+use log::{info, warn};
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use log::debug;
 use std::path::PathBuf;
-use crate::config::Config;
-use crate::event::state_machine::StateMachine;
-use crate::event::action::ActionExecutor;
-use crate::hardware::uinput::UinputHandler;
-use log::{info, warn, debug, error};
+use std::sync::{Arc, Mutex as StdMutex};
+#[cfg(any(target_os = "linux", target_os = "android"))]
 use std::time::Duration;
+use tokio::sync::RwLock;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use tokio::sync::Mutex;
+
+use crate::config::Config;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::event::action::ActionExecutor;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::event::state_machine::StateMachine;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use crate::hardware::uinput::UinputHandler;
+use crate::webui::learn::LearnState;
 
 pub struct EventProcessor {
     config: Arc<RwLock<Config>>,
+    config_path: PathBuf,
     device_path: PathBuf,
     debug_mode: bool,
+    learn_state: Arc<StdMutex<LearnState>>,
 }
 
 impl EventProcessor {
     pub async fn new(
         config: Arc<RwLock<Config>>,
+        config_path: PathBuf,
         device_path: PathBuf,
         debug: bool,
+        learn_state: Arc<StdMutex<LearnState>>,
     ) -> Result<Self> {
         Ok(Self {
             config,
+            config_path,
             device_path,
             debug_mode: debug,
+            learn_state,
         })
     }
 
     pub async fn run(&mut self) -> Result<()> {
         info!("Starting Event Processor on {:?}", self.device_path);
 
-        // Initialize Uinput
-        let uinput = Arc::new(Mutex::new(UinputHandler::new()?));
-
-        // Initialize StateMachine
-        let (rules, settings, hw_map) = {
-            let cfg = self.config.read().await;
-            (cfg.rules.clone(), cfg.settings.clone(), cfg.hardware_map.clone())
-        };
-
-        let mut state_machine = StateMachine::new(
-            rules,
-            hw_map,
-            settings.long_press_threshold_ms as u64,
-            settings.short_press_threshold_ms as u64,
-            settings.double_tap_interval_ms as u64,
-            settings.combination_timeout_ms as u64,
-        );
-
-        #[cfg(target_os = "linux")]
+        #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-            use evdev::{Device, InputEvent, InputEventKind};
+            use evdev::{Device, InputEventKind, Synchronization};
             use futures::stream::StreamExt;
-            
+
+            let uinput = Arc::new(Mutex::new(UinputHandler::new()?));
+
+            let (rules, settings, hw_map) = {
+                let cfg = self.config.read().await;
+                (cfg.rules.clone(), cfg.settings.clone(), cfg.hardware_map.clone())
+            };
+
+            let mut state_machine = StateMachine::new(
+                rules,
+                hw_map,
+                settings.long_press_threshold_ms as u64,
+                settings.short_press_threshold_ms as u64,
+                settings.double_tap_interval_ms as u64,
+                settings.combination_timeout_ms as u64,
+            );
+
             let mut device = Device::open(&self.device_path)?;
-            
-            // Grab the device to intercept events
+
             if let Err(e) = device.grab() {
                 warn!("Failed to grab device: {}. Events will not be intercepted.", e);
             } else {
@@ -65,26 +78,8 @@ impl EventProcessor {
 
             let mut events = device.into_event_stream()?;
             let mut tick = tokio::time::interval(Duration::from_millis(50));
-            // Check for config refresh every 5 seconds
             let mut config_check = tokio::time::interval(Duration::from_secs(5));
-            
-            // To detect changes, we might need a version number or hash. 
-            // For now, let's just re-create StateMachine if we suspect changes?
-            // Expensive.
-            // Better: use a notify channel. But `save_config` is in another module.
-            // Let's implement a simple version check if Config has it, or just rely on reboot for now?
-            // User requirement: "WebUI保存结果可能不会被守护进程使用".
-            // Since we use Arc<RwLock<Config>>, the in-memory config IS shared.
-            // The issue is StateMachine HAS A COPY.
-            // We should re-create StateMachine periodically or on event.
-            // Let's re-create on each tick? No, too slow.
-            // Let's check a "version" atomic in Config? Config doesn't have it.
-            // I'll make StateMachine take a REFERENCE to rules? No, lifetime hell.
-            
-            // Final decision: Re-create StateMachine every 1s for this fix to ensure consistency without channel overhead complexity
-            // (or when a special event happens). 
-            // Actually, let's just do it on config_check tick.
-            
+
             loop {
                 tokio::select! {
                     Some(ev_res) = events.next() => {
@@ -93,26 +88,39 @@ impl EventProcessor {
                                 if self.debug_mode {
                                     debug!("Event: {:?}", event);
                                 }
-                                
+
                                 if let InputEventKind::Key(key) = event.kind() {
                                     let code = key.code();
                                     let value = event.value(); // 0=UP, 1=DOWN, 2=REPEAT
 
+                                    {
+                                        let mut learn_guard = self.learn_state.lock().unwrap();
+                                        if learn_guard.consume_event(code, value) {
+                                            if self.debug_mode {
+                                                debug!("Learn mode consumed key event code={} value={}", code, value);
+                                            }
+                                            continue;
+                                        }
+                                    }
+
                                     if state_machine.is_mapped(code) {
-                                        // Process mapped key
                                         let actions = state_machine.handle_key(code, value);
                                         for action in actions {
-                                            ActionExecutor::execute(&action, uinput.clone(), self.config.clone()).await?;
+                                            ActionExecutor::execute(
+                                                &action,
+                                                uinput.clone(),
+                                                self.config.clone(),
+                                                Some(self.config_path.clone()),
+                                            )
+                                            .await?;
                                         }
                                     } else {
-                                        // Pass through unmapped key
-                                        uinput.lock().await.send_key(code, value)?;
-                                        uinput.lock().await.sync()?;
+                                        let mut dev = uinput.lock().await;
+                                        dev.send_key(code, value)?;
+                                        dev.sync()?;
                                     }
-                                } else {
-                                     if event.kind() == InputEventKind::Synchronization(evdev::Synchronization::SYN_REPORT) {
-                                        uinput.lock().await.sync()?;
-                                     }
+                                } else if event.kind() == InputEventKind::Synchronization(Synchronization::SYN_REPORT) {
+                                    uinput.lock().await.sync()?;
                                 }
                             }
                             Err(e) => {
@@ -122,13 +130,23 @@ impl EventProcessor {
                         }
                     }
                     _ = tick.tick() => {
+                        {
+                            let mut learn_guard = self.learn_state.lock().unwrap();
+                            learn_guard.refresh_timeout();
+                        }
+
                         let actions = state_machine.tick();
                         for action in actions {
-                            ActionExecutor::execute(&action, uinput.clone(), self.config.clone()).await?;
+                            ActionExecutor::execute(
+                                &action,
+                                uinput.clone(),
+                                self.config.clone(),
+                                Some(self.config_path.clone()),
+                            )
+                            .await?;
                         }
                     }
                     _ = config_check.tick() => {
-                        // Refresh StateMachine rules from Config (in case of WebUI update or ToggleRule)
                         let (rules, settings, hw_map) = {
                             let cfg = self.config.read().await;
                             (cfg.rules.clone(), cfg.settings.clone(), cfg.hardware_map.clone())
@@ -140,9 +158,10 @@ impl EventProcessor {
             }
         }
 
-        #[cfg(not(target_os = "linux"))]
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            warn!("Not on Linux, EventProcessor loop is disabled.");
+            let _ = (&self.config, &self.config_path, self.debug_mode, &self.learn_state);
+            warn!("Not on Linux/Android, EventProcessor loop is disabled.");
             tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
         }
 

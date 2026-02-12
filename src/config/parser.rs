@@ -31,3 +31,23 @@ fn ensure_yaml_path(path: &Path) -> Result<()> {
         _ => anyhow::bail!("config file must use .yaml or .yml extension: {}", path.display()),
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::config::Config;
+
+    #[test]
+    fn load_from_file_should_reject_non_yaml_extension() {
+        let err = Config::load_from_file("config.json").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(".yaml or .yml"), "unexpected error: {}", msg);
+    }
+
+    #[test]
+    fn save_to_file_should_reject_non_yaml_extension() {
+        let cfg = Config::default();
+        let err = cfg.save_to_file("config.json").unwrap_err();
+        let msg = err.to_string();
+        assert!(msg.contains(".yaml or .yml"), "unexpected error: {}", msg);
+    }
+}

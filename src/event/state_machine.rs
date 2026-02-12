@@ -10,6 +10,7 @@ pub struct KeyState {
 }
 
 #[derive(Debug)]
+#[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 struct PendingClick {
     key_code: u16,
     action: Action,
@@ -22,6 +23,7 @@ struct ParsedRule {
     trigger_keys: Vec<u16>,
 }
 
+#[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 pub struct StateMachine {
     key_states: HashMap<u16, KeyState>,
     parsed_rules: Vec<ParsedRule>,
@@ -38,8 +40,12 @@ pub struct StateMachine {
 
     // Track triggered rules to prevent repeats for Hold/ComboHold
     triggered_rules: HashSet<String>,
+    
+    // Keys involved in a successful combo, to be ignored on release
+    consumed_keys: HashSet<u16>,
 }
 
+#[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 impl StateMachine {
     pub fn new(
         rules: Vec<Rule>,
@@ -59,6 +65,7 @@ impl StateMachine {
             combination_timeout: Duration::from_millis(combination_timeout_ms),
             tap_history: HashMap::new(),
             triggered_rules: HashSet::new(),
+            consumed_keys: HashSet::new(),
         };
         sm.update_rules(rules, hardware_map);
         sm
@@ -84,6 +91,7 @@ impl StateMachine {
             self.triggered_rules.clear();
             self.pending_clicks.clear();
             self.tap_history.clear();
+            self.consumed_keys.clear();
         }
     }
 
@@ -111,6 +119,15 @@ impl StateMachine {
         } else if value == 0 {
             // UP
             if let Some(state) = self.key_states.remove(&key_code) {
+                // Ghost-click fix:
+                // If a key participated in a successful combo, suppress its UP-triggered single click.
+                if self.consumed_keys.remove(&key_code) {
+                    if self.key_states.is_empty() {
+                        self.consumed_keys.clear();
+                    }
+                    return actions;
+                }
+
                 for pr in &self.parsed_rules {
                     if pr.trigger_keys.contains(&key_code) {
                         self.triggered_rules.remove(&pr.original.id);
@@ -129,6 +146,10 @@ impl StateMachine {
                     }
                 }
             }
+        }
+
+        if self.key_states.is_empty() {
+            self.consumed_keys.clear();
         }
 
         actions
@@ -302,6 +323,7 @@ impl StateMachine {
                     actions.push(pr.original.action.clone());
                     self.triggered_rules.insert(pr.original.id.clone());
                     for key in &pr.trigger_keys {
+                        self.consumed_keys.insert(*key);
                         if let Some(state) = self.key_states.get_mut(key) {
                             match rtype {
                                 RuleType::ComboShortPress => state.triggered_short_press = true,
@@ -317,7 +339,7 @@ impl StateMachine {
         actions
     }
 
-    fn check_combo_release(&self, key_code: u16, released_pressed_at: Instant, now: Instant) -> Vec<Action> {
+    fn check_combo_release(&mut self, key_code: u16, released_pressed_at: Instant, now: Instant) -> Vec<Action> {
         let mut actions = Vec::new();
         for pr in &self.parsed_rules {
             if !(pr.original.enabled
@@ -360,6 +382,10 @@ impl StateMachine {
             if let (Some(min), Some(max)) = (pressed_times.iter().min(), pressed_times.iter().max()) {
                 if max.duration_since(*min) <= self.combination_timeout {
                     actions.push(pr.original.action.clone());
+                    // Mark all keys in this combo as consumed
+                    for k in &pr.trigger_keys {
+                        self.consumed_keys.insert(*k);
+                    }
                 }
             }
         }
@@ -400,5 +426,70 @@ fn parse_trigger(trigger: &str, map: &HashMap<String, u16>, rule_type: RuleType)
             }
         }
         _ => parse_token(trigger).map(|code| vec![code]).unwrap_or_default(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_rule(id: &str, trigger: &str, rule_type: RuleType, action: Action) -> Rule {
+        Rule {
+            id: id.to_string(),
+            trigger: trigger.to_string(),
+            rule_type,
+            action,
+            enabled: true,
+            description: String::new(),
+        }
+    }
+
+    #[test]
+    fn combo_release_should_not_trigger_single_click_after_combo_consumed() {
+        let rules = vec![
+            make_rule(
+                "combo_click",
+                "115+114",
+                RuleType::ComboClick,
+                Action::SendKey { key_code: 42 },
+            ),
+            make_rule(
+                "single_click",
+                "115",
+                RuleType::Click,
+                Action::SendKey { key_code: 24 },
+            ),
+        ];
+
+        let mut sm = StateMachine::new(rules, HashMap::new(), 800, 300, 300, 200);
+
+        assert!(sm.handle_key(115, 1).is_empty());
+        assert!(sm.handle_key(114, 1).is_empty());
+
+        let combo_actions = sm.handle_key(114, 0);
+        assert_eq!(combo_actions.len(), 1);
+        assert_eq!(combo_actions[0], Action::SendKey { key_code: 42 });
+
+        let release_first_key_actions = sm.handle_key(115, 0);
+        assert!(
+            release_first_key_actions.is_empty(),
+            "single click should be suppressed after combo is consumed"
+        );
+    }
+
+    #[test]
+    fn parse_trigger_should_support_named_single_key() {
+        let mut map = HashMap::new();
+        map.insert("POWER".to_string(), 116);
+
+        let keys = parse_trigger("POWER", &map, RuleType::Click);
+        assert_eq!(keys, vec![116]);
+    }
+
+    #[test]
+    fn parse_trigger_combo_should_require_exactly_two_keys() {
+        let map = HashMap::new();
+        let keys = parse_trigger("115+114+113", &map, RuleType::ComboClick);
+        assert!(keys.is_empty());
     }
 }

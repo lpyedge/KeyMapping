@@ -70,6 +70,12 @@ h1 {
   color: var(--muted);
 }
 
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
 .badge {
   padding: 6px 12px;
   border-radius: 999px;
@@ -334,8 +340,9 @@ textarea {
 
 .key-row {
   display: grid;
-  grid-template-columns: 1.2fr 0.8fr;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 8px;
+  align-items: center;
 }
 
 #appResults {

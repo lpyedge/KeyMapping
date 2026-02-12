@@ -42,12 +42,15 @@
 - `GET /api/config`：讀取當前設定
 - `POST /api/config`：寫回設定到 YAML
 - `GET /api/apps`：回傳已安裝 app 清單（`name` + `package`）
+- `POST /api/system/learn-start`：啟動按鍵學習模式（3 秒）
+- `GET /api/system/learn-result`：查詢學習結果（`idle` / `learning` / `captured` / `timeout`）
 
 WebUI 支援：
 - 規則新增 / 編輯 / 刪除
 - 全域閾值調整（短按、長按、雙擊、組合時窗）
 - 常見系統命令快速選單
 - App 清單查詢、前端關鍵字過濾（名稱/包名）與回填 package
+- Key Setup Wizard（逐步學習實體按鍵並更新 `hardware_map`）
 
 ## 執行流程（核心邏輯）
 
@@ -79,28 +82,18 @@ device_name: "gpio-keys"
 
 hardware_map:
   115: VOL_UP
-  114: VOL_DOWN
-  116: POWER
-
-settings:
-  long_press_threshold_ms: 800
-  short_press_threshold_ms: 300
-  double_tap_interval_ms: 300
-  combination_timeout_ms: 200
-  enable_haptic: true
-  enable_wakelock: true
-  log_level: "info"
-  rule_timeout_ms: 5000
-
+version: 1
+deviceName: "gpio-keys"
+longPressMinMs: 500
+doublePressIntervalMs: 300
+hardwareMap:
+  114: "VOL_DOWN"
+  115: "VOL_UP"
 rules:
-  - id: "rule_vol_up_short"
-    trigger: "115"
-    rule_type: SHORT_PRESS
+  - behavior: "LONG_PRESS"
+    keyCode: 115
     action:
-      type: builtin_command
-      command: open_voice_assistant
-    enabled: true
-    description: "Volume Up short press opens voice assistant"
+      type: "toggle_flashlight"
 ```
 
 ## 建置與啟動
@@ -123,6 +116,20 @@ cargo build --release --target aarch64-linux-android
 可選參數：
 
 - `--device <path>`：直接指定輸入裝置路徑（略過自動尋找）
+
+## Key Setup Wizard
+
+WebUI 提供按鍵學習精靈，協助快速初始化 `hardware_map`：
+
+1. 點擊「按鍵設定」
+2. 依序按下提示的實體按鍵（POWER / VOL_UP / VOL_DOWN / HOME / MENU）
+3. 每一步有 3 秒倒數；逾時可選擇重試或略過
+4. 完成後點擊「保存規則」寫入 YAML
+
+學習流程使用以下 API：
+
+- `POST /api/system/learn-start`：開始單次學習
+- `GET /api/system/learn-result`：每 500ms 輪詢結果與剩餘時間（`remainingMs`）
 
 ## KernelSU / WebUIX 入口識別
 
