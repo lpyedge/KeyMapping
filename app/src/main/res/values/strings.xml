@@ -1,7 +1,0 @@
-<resources>
-    <string name="app_name">PowerKeyRules</string>
-    <string name="xposed_description">Power key rules for physical buttons</string>
-    <string name="main_info">备份路径 (Hook 不读取):</string>
-    <string name="write_default">写入默认规则</string>
-    <string name="open_webui">打开 WebUI 配置</string>
-</resources>

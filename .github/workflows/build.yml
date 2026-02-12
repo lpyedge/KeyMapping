@@ -1,0 +1,59 @@
+name: Build Android Module
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install Rust
+      uses: actions-rs/toolchain@v1
+      with:
+        toolchain: stable
+        target: aarch64-linux-android
+        override: true
+
+    - name: Install Cross
+      run: cargo install cross
+
+    - name: Build Release
+      run: cross build --target aarch64-linux-android --release
+
+    - name: Prepare Package
+      run: |
+        mkdir -p dist/rust_keymapper/common
+        mkdir -p dist/rust_keymapper/config
+        mkdir -p dist/rust_keymapper/webroot
+        
+        # Copy binary
+        cp target/aarch64-linux-android/release/keymapper_d dist/rust_keymapper/
+        
+        # Copy scripts
+        cp module/module.prop dist/rust_keymapper/
+        cp module/action.sh dist/rust_keymapper/
+        cp module/service.sh dist/rust_keymapper/
+        cp module/uninstall.sh dist/rust_keymapper/
+        chmod 755 dist/rust_keymapper/action.sh
+        chmod 755 dist/rust_keymapper/service.sh
+        chmod 755 dist/rust_keymapper/uninstall.sh
+        
+        # Copy config
+        cp config/config.default.yaml dist/rust_keymapper/config/
+        
+        # Copy WebRoot
+        cp -r webroot/* dist/rust_keymapper/webroot/
+        
+    - name: Zip Module
+      run: |
+        cd dist
+        zip -r rust_keymapper_v0.5.0.zip rust_keymapper
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: magisk-module
+        path: dist/rust_keymapper_v0.5.0.zip

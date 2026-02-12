@@ -1,0 +1,8 @@
+id=rust_keymapper
+name=Rust Keymapper
+version=v0.5.0
+versionCode=5
+author=Rikka
+description=System-level key remapping daemon written in Rust. Supports advanced gestures and WebUI configuration.
+actionIcon=webroot/icon.png
+webuiIcon=webroot/icon.png

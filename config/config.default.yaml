@@ -1,0 +1,33 @@
+# ===== System Config =====
+device_name: "gpio-keys"  # Change this to your specific input device name
+
+# Hardware Map: raw_keycode -> logical_name
+hardware_map:
+  115: VOL_UP
+  114: VOL_DOWN
+  116: POWER
+  102: HOME
+  139: MENU
+
+# ===== Global Settings =====
+settings:
+  long_press_threshold_ms: 800
+  short_press_threshold_ms: 300
+  double_tap_interval_ms: 300
+  combination_timeout_ms: 200
+  enable_haptic: true
+  enable_wakelock: true
+  log_level: "info"
+  rule_timeout_ms: 5000
+
+# ===== Key Rules =====
+rules:
+  # Example: Volume Up Short Press opens voice assistant
+  - id: "rule_vol_up_short"
+    trigger: "115"
+    rule_type: SHORT_PRESS
+    action:
+      type: builtin_command
+      command: open_voice_assistant
+    enabled: true
+    description: "Volume Up short press opens voice assistant"
