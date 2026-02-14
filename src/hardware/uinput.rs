@@ -28,7 +28,7 @@ impl UinputHandler {
                 keys.insert(Key::new(i));
             }
 
-            let device = VirtualDeviceBuilder::new()
+            let device = VirtualDeviceBuilder::new()?
                 .name("Rust Keymapper Virtual Device")
                 .with_keys(&keys)
                 .build()
