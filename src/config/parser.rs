@@ -15,7 +15,19 @@ impl Config {
         let path = path.as_ref();
         ensure_yaml_path(path)?;
         let content = serde_yaml::to_string(self)?;
-        std::fs::write(path, content)?;
+        let tmp = path.with_extension("yaml.tmp");
+        std::fs::write(&tmp, &content)?;
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
+    pub async fn save_to_file_async<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let path = path.as_ref();
+        ensure_yaml_path(path)?;
+        let content = serde_yaml::to_string(self)?;
+        let tmp = path.with_extension("yaml.tmp");
+        tokio::fs::write(&tmp, &content).await?;
+        tokio::fs::rename(&tmp, path).await?;
         Ok(())
     }
 }
@@ -28,7 +40,10 @@ fn ensure_yaml_path(path: &Path) -> Result<()> {
 
     match ext.as_deref() {
         Some("yaml") | Some("yml") => Ok(()),
-        _ => anyhow::bail!("config file must use .yaml or .yml extension: {}", path.display()),
+        _ => anyhow::bail!(
+            "config file must use .yaml or .yml extension: {}",
+            path.display()
+        ),
     }
 }
 

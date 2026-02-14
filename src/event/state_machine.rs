@@ -1,4 +1,4 @@
-﻿use crate::config::{Action, GlobalSettings, Rule, RuleType};
+use crate::config::{Action, GlobalSettings, Rule, RuleType};
 use std::collections::{HashMap, HashSet};
 use std::time::{Duration, Instant};
 
@@ -40,9 +40,12 @@ pub struct StateMachine {
 
     // Track triggered rules to prevent repeats for Hold/ComboHold
     triggered_rules: HashSet<String>,
-    
+
     // Keys involved in a successful combo, to be ignored on release
     consumed_keys: HashSet<u16>,
+
+    // Cache of all keys that trigger any rule (for O(1) lookup)
+    mapped_keys: HashSet<u16>,
 }
 
 #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
@@ -66,6 +69,7 @@ impl StateMachine {
             tap_history: HashMap::new(),
             triggered_rules: HashSet::new(),
             consumed_keys: HashSet::new(),
+            mapped_keys: HashSet::new(),
         };
         sm.update_rules(rules, hardware_map);
         sm
@@ -92,12 +96,22 @@ impl StateMachine {
             self.pending_clicks.clear();
             self.tap_history.clear();
             self.consumed_keys.clear();
+
+            // Rebuild mapped_keys cache
+            self.mapped_keys = self
+                .parsed_rules
+                .iter()
+                .filter(|pr| pr.original.enabled)
+                .flat_map(|pr| pr.trigger_keys.iter())
+                .copied()
+                .collect();
         }
     }
 
     pub fn update_settings(&mut self, settings: &GlobalSettings) {
         self.long_press_threshold = Duration::from_millis(settings.long_press_threshold_ms as u64);
-        self.short_press_threshold = Duration::from_millis(settings.short_press_threshold_ms as u64);
+        self.short_press_threshold =
+            Duration::from_millis(settings.short_press_threshold_ms as u64);
         self.double_tap_interval = Duration::from_millis(settings.double_tap_interval_ms as u64);
         self.combination_timeout = Duration::from_millis(settings.combination_timeout_ms as u64);
     }
@@ -183,9 +197,9 @@ impl StateMachine {
             })
             .collect();
 
-        if double_click_rule.is_some() {
+        if let Some(double_click_rule) = double_click_rule {
             if new_count == 2 {
-                actions.push(double_click_rule.expect("checked is_some").original.action.clone());
+                actions.push(double_click_rule.original.action.clone());
                 self.pending_clicks.retain(|p| p.key_code != key_code);
                 self.tap_history.remove(&key_code);
             } else {
@@ -282,7 +296,12 @@ impl StateMachine {
         actions
     }
 
-    fn check_combo_hold(&mut self, rtype: RuleType, default_threshold: Duration, now: Instant) -> Vec<Action> {
+    fn check_combo_hold(
+        &mut self,
+        rtype: RuleType,
+        default_threshold: Duration,
+        now: Instant,
+    ) -> Vec<Action> {
         let mut actions = Vec::new();
 
         let indices: Vec<usize> = self
@@ -339,7 +358,12 @@ impl StateMachine {
         actions
     }
 
-    fn check_combo_release(&mut self, key_code: u16, released_pressed_at: Instant, now: Instant) -> Vec<Action> {
+    fn check_combo_release(
+        &mut self,
+        key_code: u16,
+        released_pressed_at: Instant,
+        now: Instant,
+    ) -> Vec<Action> {
         let mut actions = Vec::new();
         for pr in &self.parsed_rules {
             if !(pr.original.enabled
@@ -347,6 +371,9 @@ impl StateMachine {
                 && pr.trigger_keys.len() == 2
                 && pr.trigger_keys.contains(&key_code))
             {
+                continue;
+            }
+            if self.triggered_rules.contains(&pr.original.id) {
                 continue;
             }
 
@@ -379,9 +406,11 @@ impl StateMachine {
                 continue;
             }
 
-            if let (Some(min), Some(max)) = (pressed_times.iter().min(), pressed_times.iter().max()) {
+            if let (Some(min), Some(max)) = (pressed_times.iter().min(), pressed_times.iter().max())
+            {
                 if max.duration_since(*min) <= self.combination_timeout {
                     actions.push(pr.original.action.clone());
+                    self.triggered_rules.insert(pr.original.id.clone());
                     // Mark all keys in this combo as consumed
                     for k in &pr.trigger_keys {
                         self.consumed_keys.insert(*k);
@@ -393,7 +422,7 @@ impl StateMachine {
     }
 
     pub fn is_mapped(&self, key_code: u16) -> bool {
-        self.parsed_rules.iter().any(|pr| pr.trigger_keys.contains(&key_code))
+        self.mapped_keys.contains(&key_code)
     }
 }
 
@@ -425,7 +454,9 @@ fn parse_trigger(trigger: &str, map: &HashMap<String, u16>, rule_type: RuleType)
                 _ => Vec::new(),
             }
         }
-        _ => parse_token(trigger).map(|code| vec![code]).unwrap_or_default(),
+        _ => parse_token(trigger)
+            .map(|code| vec![code])
+            .unwrap_or_default(),
     }
 }
 

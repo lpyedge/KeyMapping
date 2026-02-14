@@ -6,6 +6,21 @@ BIN=$MODDIR/keymapper_d
 while [ "$(getprop sys.boot_completed)" != "1" ]; do
   sleep 1
 done
+# Smart Wait: Wait for User 0 to unlock (CE storage available)
+# This ensures users can input PIN/Pattern without daemon interference.
+# If the property doesn't exist (old Android), we fall back to a fixed delay.
+MAX_WAIT=60
+waited=0
+while [ "$(getprop sys.user.0.ce_available)" != "true" ]; do
+  sleep 1
+  waited=$((waited + 1))
+  if [ "$waited" -ge "$MAX_WAIT" ]; then
+    break # Fallback if property never sets (e.g. non-FBE device)
+  fi
+done
+
+# Small buffer for Launcher to settle
+sleep 3
 
 # Start the daemon
 cd $MODDIR

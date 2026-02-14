@@ -1,0 +1,49 @@
+﻿@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply min-h-screen bg-slate-950 text-slate-100 antialiased;
+    background-image: radial-gradient(circle at 8% 0%, rgba(36, 84, 132, 0.65), transparent 38%),
+      radial-gradient(circle at 95% 100%, rgba(16, 88, 112, 0.55), transparent 42%);
+  }
+
+  code {
+    @apply font-mono;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply rounded-2xl border border-slate-700/70 bg-slate-900/70 p-4 shadow-lg;
+  }
+
+  .btn {
+    @apply inline-flex items-center gap-2 rounded-lg border border-slate-600 px-3 py-2 text-sm font-semibold transition;
+  }
+
+  .btn-primary {
+    @apply btn border-sky-500/60 bg-sky-500 text-slate-950 hover:bg-sky-400;
+  }
+
+  .btn-secondary {
+    @apply btn bg-slate-800 text-slate-100 hover:bg-slate-700;
+  }
+
+  .btn-danger {
+    @apply btn border-rose-500/50 bg-rose-900/40 text-rose-100 hover:bg-rose-800/60;
+  }
+
+  .input {
+    @apply w-full rounded-lg border border-slate-600 bg-slate-900/80 px-3 py-2 text-sm text-slate-100 outline-none ring-0 transition focus:border-sky-400;
+  }
+
+  .hint {
+    @apply text-sm text-slate-400;
+  }
+
+  .badge {
+    @apply inline-block rounded-full border px-2 py-0.5 text-xs;
+  }
+}

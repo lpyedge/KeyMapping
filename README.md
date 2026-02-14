@@ -82,18 +82,21 @@ device_name: "gpio-keys"
 
 hardware_map:
   115: VOL_UP
-version: 1
-deviceName: "gpio-keys"
-longPressMinMs: 500
-doublePressIntervalMs: 300
-hardwareMap:
   114: "VOL_DOWN"
-  115: "VOL_UP"
+
+settings:
+  long_press_threshold_ms: 500
+  short_press_threshold_ms: 300
+  double_tap_interval_ms: 300
+  combination_timeout_ms: 200
+
 rules:
-  - behavior: "LONG_PRESS"
-    keyCode: 115
+  - id: "rule_power_long"
+    trigger: "115"
+    rule_type: LONG_PRESS
     action:
-      type: "toggle_flashlight"
+      type: builtin_command
+      command: toggle_flashlight
 ```
 
 ## 建置與啟動
@@ -102,6 +105,17 @@ rules:
 
 ```bash
 cargo build --release --target aarch64-linux-android
+```
+
+### WebUI 前端建置（Svelte）
+
+WebUI 前端原始碼位於 `webui/`，使用 `Svelte + Tailwind + Vite`。  
+`npm run build` 會直接輸出到 `webroot/`，供 Rust `ServeDir` 靜態託管。
+
+```bash
+cd webui
+npm install
+npm run build
 ```
 
 ### 啟動（主程式）

@@ -1,21 +1,17 @@
-﻿use anyhow::{anyhow, bail, Result};
-use axum::{
-    extract::State,
-    response::IntoResponse,
-    Json,
-};
+use anyhow::{anyhow, bail, Result};
+use axum::{extract::State, response::IntoResponse, Json};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
-use tokio::process::Command;
 use uuid::Uuid;
 
 use crate::config::{
-    Action, BuiltinCommand, Config, IntentSpec, Rule, RuleType,
+    Action, BrightnessDirection, BuiltinCommand, Config, IntentSpec, Rule, RuleType,
+    VolumeDirection,
 };
 use crate::utils::logger::append_webui_log;
 use crate::webui::learn::LearnResultSnapshot;
-use crate::webui::server::AppState;
 use crate::webui::learn::LearnStatus;
+use crate::webui::server::AppState;
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +23,6 @@ struct LearnResultDto {
 
 #[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 pub(crate) struct WebUiConfigDto {
     version: u32,
     #[serde(default)]
@@ -37,28 +32,46 @@ pub(crate) struct WebUiConfigDto {
     double_press_interval_ms: u32,
     long_press_min_ms: u32,
     short_press_min_ms: u32,
+    #[serde(default = "default_combination_timeout_ms")]
+    combination_timeout_ms: u32,
+    #[serde(default = "default_rule_timeout_ms")]
+    rule_timeout_ms: u32,
     #[serde(default)]
     rules: Vec<WebUiRuleDto>,
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 struct WebUiRuleDto {
     #[serde(default)]
     id: Option<String>,
-    #[serde(default)]
-    trigger: Option<String>,
-    #[serde(default)]
-    key_code: Option<u16>,
-    behavior: WebUiBehaviorDto,
-    #[serde(default)]
-    combo_key_code: Option<u16>,
-    action: WebUiActionDto,
     #[serde(default = "default_true_bool")]
     enabled: bool,
     #[serde(default)]
     description: String,
+    /// "and" or "or" — reserved for phase 2 multi-condition logic
+    #[serde(default = "default_condition_logic")]
+    condition_logic: String,
+    /// V1: exactly 1 condition of type "key_event"
+    conditions: Vec<WebUiConditionDto>,
+    /// Multiple actions executed sequentially
+    actions: Vec<WebUiActionDto>,
+}
+
+/// Extensible condition type — V1 only implements key_event
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "snake_case")]
+enum WebUiConditionDto {
+    KeyEvent {
+        #[serde(default)]
+        key_code: Option<u16>,
+        #[serde(default)]
+        combo_key_code: Option<u16>,
+        behavior: WebUiBehaviorDto,
+    },
+    // Phase 2 stubs — currently rejected by save_config
+    // Geofence { lat: f64, lon: f64, radius_m: f64 },
+    // TimeRange { start: String, end: String },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -75,20 +88,49 @@ enum WebUiBehaviorDto {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-#[serde(deny_unknown_fields)]
 enum WebUiActionDto {
-    RunShell { command: String },
+    RunShell {
+        command: String,
+    },
     SendKey {
         #[serde(rename = "keyCode")]
         key_code: u16,
     },
-    BuiltinCommand { command: WebUiBuiltinCommandDto },
+    BuiltinCommand {
+        command: WebUiBuiltinCommandDto,
+    },
     LaunchApp {
         package: String,
         #[serde(default)]
         activity: Option<String>,
     },
-    LaunchIntent { intent: WebUiIntentDto },
+    LaunchIntent {
+        intent: WebUiIntentDto,
+    },
+    MultiTap {
+        codes: Vec<u16>,
+        #[serde(default = "default_multitap_interval_ms")]
+        interval_ms: u32,
+    },
+    ToggleScreen,
+    ToggleRule {
+        rule_id: String,
+    },
+    VolumeControl {
+        direction: WebUiVolumeDirectionDto,
+    },
+    BrightnessControl {
+        direction: WebUiBrightnessDirectionDto,
+    },
+    Swipe {
+        dx: i32,
+        dy: i32,
+        duration_ms: u32,
+    },
+    Intercept,
+    Macro {
+        actions: Vec<WebUiActionDto>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
@@ -101,9 +143,22 @@ enum WebUiBuiltinCommandDto {
     ToggleDoNotDisturb,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum WebUiVolumeDirectionDto {
+    Up,
+    Down,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+enum WebUiBrightnessDirectionDto {
+    Up,
+    Down,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
-#[serde(deny_unknown_fields)]
 struct WebUiIntentDto {
     #[serde(default)]
     action: Option<String>,
@@ -118,7 +173,6 @@ struct WebUiIntentDto {
     #[serde(default)]
     extras: std::collections::HashMap<String, String>,
 }
-
 
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -135,6 +189,22 @@ pub struct AppListDto {
 
 fn default_true_bool() -> bool {
     true
+}
+
+fn default_multitap_interval_ms() -> u32 {
+    50
+}
+
+fn default_combination_timeout_ms() -> u32 {
+    200
+}
+
+fn default_rule_timeout_ms() -> u32 {
+    5000
+}
+
+fn default_condition_logic() -> String {
+    "and".to_string()
 }
 
 impl WebUiBehaviorDto {
@@ -226,25 +296,87 @@ impl From<BuiltinCommand> for WebUiBuiltinCommandDto {
     }
 }
 
-fn action_to_webui_dto(action: &Action) -> Result<WebUiActionDto> {
+impl From<WebUiVolumeDirectionDto> for VolumeDirection {
+    fn from(value: WebUiVolumeDirectionDto) -> Self {
+        match value {
+            WebUiVolumeDirectionDto::Up => VolumeDirection::Up,
+            WebUiVolumeDirectionDto::Down => VolumeDirection::Down,
+        }
+    }
+}
+
+impl From<VolumeDirection> for WebUiVolumeDirectionDto {
+    fn from(value: VolumeDirection) -> Self {
+        match value {
+            VolumeDirection::Up => WebUiVolumeDirectionDto::Up,
+            VolumeDirection::Down => WebUiVolumeDirectionDto::Down,
+        }
+    }
+}
+
+impl From<WebUiBrightnessDirectionDto> for BrightnessDirection {
+    fn from(value: WebUiBrightnessDirectionDto) -> Self {
+        match value {
+            WebUiBrightnessDirectionDto::Up => BrightnessDirection::Up,
+            WebUiBrightnessDirectionDto::Down => BrightnessDirection::Down,
+        }
+    }
+}
+
+impl From<BrightnessDirection> for WebUiBrightnessDirectionDto {
+    fn from(value: BrightnessDirection) -> Self {
+        match value {
+            BrightnessDirection::Up => WebUiBrightnessDirectionDto::Up,
+            BrightnessDirection::Down => WebUiBrightnessDirectionDto::Down,
+        }
+    }
+}
+
+fn action_to_webui_dto(action: &Action) -> WebUiActionDto {
     match action {
-        Action::Shell { cmd } => Ok(WebUiActionDto::RunShell {
+        Action::Shell { cmd } => WebUiActionDto::RunShell {
             command: cmd.clone(),
-        }),
-        Action::SendKey { key_code } => Ok(WebUiActionDto::SendKey {
+        },
+        Action::SendKey { key_code } => WebUiActionDto::SendKey {
             key_code: *key_code,
-        }),
-        Action::BuiltinCommand { command } => Ok(WebUiActionDto::BuiltinCommand {
+        },
+        Action::BuiltinCommand { command } => WebUiActionDto::BuiltinCommand {
             command: (*command).into(),
-        }),
-        Action::LaunchApp { package, activity } => Ok(WebUiActionDto::LaunchApp {
+        },
+        Action::LaunchApp { package, activity } => WebUiActionDto::LaunchApp {
             package: package.clone(),
             activity: activity.clone(),
-        }),
-        Action::LaunchIntent { intent } => Ok(WebUiActionDto::LaunchIntent {
+        },
+        Action::LaunchIntent { intent } => WebUiActionDto::LaunchIntent {
             intent: intent.into(),
-        }),
-        _ => bail!("unsupported action in strict WebUI mode: {:?}", action),
+        },
+        Action::MultiTap { codes, interval_ms } => WebUiActionDto::MultiTap {
+            codes: codes.clone(),
+            interval_ms: *interval_ms,
+        },
+        Action::ToggleScreen => WebUiActionDto::ToggleScreen,
+        Action::ToggleRule { rule_id } => WebUiActionDto::ToggleRule {
+            rule_id: rule_id.clone(),
+        },
+        Action::VolumeControl { direction } => WebUiActionDto::VolumeControl {
+            direction: (*direction).into(),
+        },
+        Action::BrightnessControl { direction } => WebUiActionDto::BrightnessControl {
+            direction: (*direction).into(),
+        },
+        Action::Swipe {
+            dx,
+            dy,
+            duration_ms,
+        } => WebUiActionDto::Swipe {
+            dx: *dx,
+            dy: *dy,
+            duration_ms: *duration_ms,
+        },
+        Action::Intercept => WebUiActionDto::Intercept,
+        Action::Macro { actions } => WebUiActionDto::Macro {
+            actions: actions.iter().map(action_to_webui_dto).collect(),
+        },
     }
 }
 
@@ -256,9 +388,35 @@ impl From<WebUiActionDto> for Action {
             WebUiActionDto::BuiltinCommand { command } => Action::BuiltinCommand {
                 command: command.into(),
             },
-            WebUiActionDto::LaunchApp { package, activity } => Action::LaunchApp { package, activity },
+            WebUiActionDto::LaunchApp { package, activity } => {
+                Action::LaunchApp { package, activity }
+            }
             WebUiActionDto::LaunchIntent { intent } => Action::LaunchIntent {
                 intent: intent.into(),
+            },
+            WebUiActionDto::MultiTap { codes, interval_ms } => {
+                Action::MultiTap { codes, interval_ms }
+            }
+            WebUiActionDto::ToggleScreen => Action::ToggleScreen,
+            WebUiActionDto::ToggleRule { rule_id } => Action::ToggleRule { rule_id },
+            WebUiActionDto::VolumeControl { direction } => Action::VolumeControl {
+                direction: direction.into(),
+            },
+            WebUiActionDto::BrightnessControl { direction } => Action::BrightnessControl {
+                direction: direction.into(),
+            },
+            WebUiActionDto::Swipe {
+                dx,
+                dy,
+                duration_ms,
+            } => Action::Swipe {
+                dx,
+                dy,
+                duration_ms,
+            },
+            WebUiActionDto::Intercept => Action::Intercept,
+            WebUiActionDto::Macro { actions } => Action::Macro {
+                actions: actions.into_iter().map(Into::into).collect(),
             },
         }
     }
@@ -275,64 +433,70 @@ fn parse_token_to_code(
     }
 }
 
-fn parse_trigger_to_dto(
+/// Build a condition DTO from an internal Rule's trigger + rule_type
+fn condition_from_rule(
     trigger: &str,
     rule_type: RuleType,
     name_to_code: &std::collections::HashMap<String, u16>,
-) -> (Option<u16>, Option<u16>, Option<String>) {
-    if matches!(
-        rule_type,
-        RuleType::ComboClick | RuleType::ComboShortPress | RuleType::ComboLongPress
-    ) {
+) -> WebUiConditionDto {
+    let behavior = WebUiBehaviorDto::from_rule_type(rule_type);
+    if behavior.is_combo() {
         if let Some((left, right)) = trigger.split_once('+') {
             let key_code = parse_token_to_code(left.trim(), name_to_code);
             let combo_key_code = parse_token_to_code(right.trim(), name_to_code);
-            return (key_code, combo_key_code, Some(trigger.to_string()));
+            return WebUiConditionDto::KeyEvent { key_code, combo_key_code, behavior };
         }
-        return (None, None, Some(trigger.to_string()));
     }
-
     let key_code = parse_token_to_code(trigger.trim(), name_to_code);
-    (key_code, None, Some(trigger.to_string()))
+    WebUiConditionDto::KeyEvent { key_code, combo_key_code: None, behavior }
 }
 
-fn build_trigger(
-    behavior: WebUiBehaviorDto,
-    trigger: Option<String>,
-    key_code: Option<u16>,
-    combo_key_code: Option<u16>,
-) -> Result<String> {
-    if behavior.is_combo() {
-        let k1 = key_code.ok_or_else(|| anyhow!("combo rule requires keyCode"))?;
-        let k2 = combo_key_code.ok_or_else(|| anyhow!("combo rule requires comboKeyCode"))?;
-        if k1 == k2 {
-            bail!("combo key codes cannot be identical");
-        }
-        let built = format!("{}+{}", k1, k2);
-        if let Some(raw) = trigger {
-            let t = raw.trim();
-            if !t.is_empty() && t != built {
-                bail!("trigger does not match keyCode/comboKeyCode");
+/// Convert a condition DTO back to (trigger_string, RuleType)
+fn condition_to_trigger(cond: &WebUiConditionDto) -> Result<(String, RuleType)> {
+    match cond {
+        WebUiConditionDto::KeyEvent { key_code, combo_key_code, behavior } => {
+            let rule_type = behavior.into_rule_type();
+            if behavior.is_combo() {
+                let k1 = key_code.ok_or_else(|| anyhow!("combo rule requires keyCode"))?;
+                let k2 = combo_key_code.ok_or_else(|| anyhow!("combo rule requires comboKeyCode"))?;
+                if k1 == k2 {
+                    bail!("combo key codes cannot be identical");
+                }
+                Ok((format!("{}+{}", k1, k2), rule_type))
+            } else {
+                if combo_key_code.is_some() {
+                    bail!("comboKeyCode is only valid for combo rules");
+                }
+                let k = key_code.ok_or_else(|| anyhow!("rule requires keyCode"))?;
+                Ok((k.to_string(), rule_type))
             }
         }
-        return Ok(built);
     }
-
-    if combo_key_code.is_some() {
-        bail!("comboKeyCode is only valid for combo rules");
-    }
-    let k = key_code.ok_or_else(|| anyhow!("rule requires keyCode"))?;
-    let built = k.to_string();
-    if let Some(raw) = trigger {
-        let t = raw.trim();
-        if !t.is_empty() && t != built {
-            bail!("trigger does not match keyCode");
-        }
-    }
-    Ok(built)
 }
 
-fn config_to_webui_dto(cfg: &Config) -> Result<WebUiConfigDto> {
+/// Convert internal action to DTO action list (unwraps Macro into flat list)
+fn action_to_dto_list(action: &Action) -> Vec<WebUiActionDto> {
+    match action {
+        Action::Macro { actions } => actions.iter().map(action_to_webui_dto).collect(),
+        other => vec![action_to_webui_dto(other)],
+    }
+}
+
+/// Convert a DTO action list to a single internal Action (wraps multiple into Macro)
+fn dto_list_to_action(actions: Vec<WebUiActionDto>) -> Result<Action> {
+    if actions.is_empty() {
+        bail!("rule must have at least one action");
+    }
+    if actions.len() == 1 {
+        Ok(actions.into_iter().next().unwrap().into())
+    } else {
+        Ok(Action::Macro {
+            actions: actions.into_iter().map(Into::into).collect(),
+        })
+    }
+}
+
+fn config_to_webui_dto(cfg: &Config) -> WebUiConfigDto {
     let name_to_code: std::collections::HashMap<String, u16> = cfg
         .hardware_map
         .iter()
@@ -341,23 +505,20 @@ fn config_to_webui_dto(cfg: &Config) -> Result<WebUiConfigDto> {
 
     let mut rules = Vec::with_capacity(cfg.rules.len());
     for r in &cfg.rules {
-        let action = action_to_webui_dto(&r.action)?;
-        let (key_code, combo_key_code, trigger) =
-            parse_trigger_to_dto(&r.trigger, r.rule_type, &name_to_code);
+        let condition = condition_from_rule(&r.trigger, r.rule_type, &name_to_code);
+        let actions = action_to_dto_list(&r.action);
 
         rules.push(WebUiRuleDto {
             id: Some(r.id.clone()),
-            trigger,
-            key_code,
-            behavior: WebUiBehaviorDto::from_rule_type(r.rule_type),
-            combo_key_code,
-            action,
             enabled: r.enabled,
             description: r.description.clone(),
+            condition_logic: "and".to_string(),
+            conditions: vec![condition],
+            actions,
         });
     }
 
-    Ok(WebUiConfigDto {
+    WebUiConfigDto {
         version: 1,
         device_name: cfg.device_name.clone(),
         hardware_map: cfg
@@ -368,20 +529,15 @@ fn config_to_webui_dto(cfg: &Config) -> Result<WebUiConfigDto> {
         double_press_interval_ms: cfg.settings.double_tap_interval_ms,
         long_press_min_ms: cfg.settings.long_press_threshold_ms,
         short_press_min_ms: cfg.settings.short_press_threshold_ms,
+        combination_timeout_ms: cfg.settings.combination_timeout_ms,
+        rule_timeout_ms: cfg.settings.rule_timeout_ms,
         rules,
-    })
+    }
 }
 
 pub async fn get_config(State(state): State<AppState>) -> impl IntoResponse {
     let cfg = state.config.read().await;
-    match config_to_webui_dto(&cfg) {
-        Ok(dto) => Json(dto).into_response(),
-        Err(e) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            format!("failed to serialize config for WebUI: {}", e),
-        )
-            .into_response(),
-    }
+    Json(config_to_webui_dto(&cfg)).into_response()
 }
 
 pub async fn save_config(
@@ -405,34 +561,56 @@ pub async fn save_config(
         new_config.device_name = dto.device_name.trim().to_string();
     }
     if !dto.hardware_map.is_empty() {
-        new_config.hardware_map = dto.hardware_map.iter().map(|(k, v)| (*k, v.clone())).collect();
+        new_config.hardware_map = dto
+            .hardware_map
+            .iter()
+            .map(|(k, v)| (*k, v.clone()))
+            .collect();
     }
 
     new_config.settings.double_tap_interval_ms = dto.double_press_interval_ms;
     new_config.settings.long_press_threshold_ms = dto.long_press_min_ms;
     new_config.settings.short_press_threshold_ms = dto.short_press_min_ms;
+    new_config.settings.combination_timeout_ms = dto.combination_timeout_ms;
+    new_config.settings.rule_timeout_ms = dto.rule_timeout_ms;
     new_config.rules.clear();
 
     for r in dto.rules {
-        let rule_type = r.behavior.into_rule_type();
-        let trigger = match build_trigger(r.behavior, r.trigger.clone(), r.key_code, r.combo_key_code) {
+        // V1: exactly 1 condition of type key_event
+        if r.conditions.len() != 1 {
+            return (
+                axum::http::StatusCode::BAD_REQUEST,
+                format!("Rule {:?}: V1 requires exactly 1 condition, got {}", r.id, r.conditions.len()),
+            )
+                .into_response();
+        }
+
+        let (trigger, rule_type) = match condition_to_trigger(&r.conditions[0]) {
             Ok(v) => v,
             Err(e) => {
                 return (
                     axum::http::StatusCode::BAD_REQUEST,
-                    format!("Invalid trigger for rule {:?}: {}", r.id, e),
+                    format!("Invalid condition for rule {:?}: {}", r.id, e),
                 )
                     .into_response();
             }
         };
 
-        let action: Action = r.action.clone().into();
+        let action = match dto_list_to_action(r.actions) {
+            Ok(v) => v,
+            Err(e) => {
+                return (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    format!("Invalid action for rule {:?}: {}", r.id, e),
+                )
+                    .into_response();
+            }
+        };
 
-        let id = r
-            .id
-            .clone()
-            .filter(|s| !s.trim().is_empty())
-            .unwrap_or_else(|| format!("{}_{}", Uuid::new_v4(), trigger));
+        let id =
+            r.id.clone()
+                .filter(|s| !s.trim().is_empty())
+                .unwrap_or_else(|| format!("{}_{}", Uuid::new_v4(), trigger));
 
         new_config.rules.push(Rule {
             id,
@@ -452,7 +630,12 @@ pub async fn save_config(
             .into_response();
     }
 
-    if let Err(e) = new_config.save_to_file(state.config_path.as_ref()) {
+    {
+        let mut cfg = state.config.write().await;
+        *cfg = new_config.clone();
+    }
+    if let Err(e) = new_config.save_to_file_async(state.config_path.as_ref()).await {
+        log::error!("Config saved to memory but file write failed: {}", e);
         return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to save {}: {}", state.config_path.display(), e),
@@ -460,8 +643,7 @@ pub async fn save_config(
             .into_response();
     }
 
-    let mut cfg = state.config.write().await;
-    *cfg = new_config;
+    let cfg = state.config.read().await;
 
     let log_msg = format!(
         "save_config ok: path={}, rules={}, long_press_ms={}, short_press_ms={}, double_tap_ms={}, combination_timeout_ms={}, rule_timeout_ms={}",
@@ -478,78 +660,37 @@ pub async fn save_config(
     (axum::http::StatusCode::OK, "Saved").into_response()
 }
 
-pub async fn list_apps() -> impl IntoResponse {
-    match fetch_installed_apps().await {
-        Ok(apps) => Json(AppListDto { apps }).into_response(),
-        Err(e) => (
+pub async fn list_apps(State(state): State<AppState>) -> impl IntoResponse {
+    use crate::webui::app_cache::update_app_cache;
+    if let Err(e) = update_app_cache(&state.app_cache).await {
+        return (
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             format!("Failed to list apps: {}", e),
         )
-            .into_response(),
-    }
-}
-
-async fn fetch_installed_apps() -> Result<Vec<AppItemDto>> {
-    let output = Command::new("sh")
-        .arg("-c")
-        .arg("pm list packages")
-        .output()
-        .await?;
-
-    if !output.status.success() {
-        bail!(
-            "pm list packages failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+            .into_response();
     }
 
-    let mut packages: Vec<String> = String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| line.strip_prefix("package:"))
-        .map(|s| s.trim().to_string())
-        .filter(|pkg| !pkg.is_empty())
+    let cache = state.app_cache.read().await;
+    let apps: Vec<AppItemDto> = cache
+        .get_apps()
+        .into_iter()
+        .map(|(package, name)| AppItemDto { package, name })
         .collect();
-
-    packages.sort();
-    packages.dedup();
-
-    let mut apps = Vec::with_capacity(packages.len());
-    for package in packages {
-        let name = fetch_app_label(&package).await.unwrap_or_else(|| package.clone());
-        apps.push(AppItemDto { package, name });
-    }
-    Ok(apps)
-}
-
-async fn fetch_app_label(package: &str) -> Option<String> {
-    let output = Command::new("pm").arg("dump").arg(package).output().await.ok()?;
-    if !output.status.success() {
-        return None;
-    }
-
-    for raw_line in String::from_utf8_lossy(&output.stdout).lines() {
-        let line = raw_line.trim();
-        if !line.starts_with("application-label") {
-            continue;
-        }
-        let (_, value) = line.split_once(':')?;
-        let label = value.trim().trim_matches('\'').trim();
-        if !label.is_empty() {
-            return Some(label.to_string());
-        }
-    }
-    None
+    Json(AppListDto { apps }).into_response()
 }
 
 pub async fn start_learning(State(state): State<AppState>) -> impl IntoResponse {
-    let mut learn = state.learn_state.lock().unwrap();
+    let mut learn = state.learn_state.lock();
     learn.start();
     (axum::http::StatusCode::OK, "Learning started")
 }
 
 pub async fn get_learn_result(State(state): State<AppState>) -> impl IntoResponse {
-    let mut learn = state.learn_state.lock().unwrap();
-    let LearnResultSnapshot { status, remaining_ms } = learn.snapshot();
+    let mut learn = state.learn_state.lock();
+    let LearnResultSnapshot {
+        status,
+        remaining_ms,
+    } = learn.snapshot();
 
     let (status_str, code) = match status {
         LearnStatus::Idle => ("idle", None),
@@ -563,4 +704,94 @@ pub async fn get_learn_result(State(state): State<AppState>) -> impl IntoRespons
         key_code: code,
         remaining_ms,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{Action, RuleType};
+    use std::collections::HashMap;
+
+    #[test]
+    fn condition_conversion_combo_roundtrip() {
+        let mut map = HashMap::new();
+        map.insert("VOL_UP".to_string(), 115);
+        map.insert("VOL_DOWN".to_string(), 114);
+
+        // 1. Rule -> DTO
+        let trigger = "115+114";
+        let rule_type = RuleType::ComboShortPress;
+        let dto = condition_from_rule(trigger, rule_type, &map);
+
+        match dto {
+            WebUiConditionDto::KeyEvent { key_code, combo_key_code, behavior } => {
+                assert_eq!(key_code, Some(115));
+                assert_eq!(combo_key_code, Some(114));
+                assert!(behavior.is_combo());
+            }
+        }
+
+        // 2. DTO -> Rule
+        let (out_trigger, out_type) = condition_to_trigger(&dto).expect("conversion failed");
+        assert_eq!(out_trigger, "115+114");
+        assert_eq!(out_type, RuleType::ComboShortPress);
+    }
+
+    #[test]
+    fn condition_conversion_single_roundtrip() {
+        let map = HashMap::new();
+        let trigger = "115";
+        let rule_type = RuleType::LongPress;
+        let dto = condition_from_rule(trigger, rule_type, &map);
+
+        match dto {
+            WebUiConditionDto::KeyEvent { key_code, combo_key_code, behavior } => {
+                assert_eq!(key_code, Some(115));
+                assert_eq!(combo_key_code, None);
+                assert!(!behavior.is_combo());
+            }
+        }
+
+        let (out_trigger, out_type) = condition_to_trigger(&dto).expect("conversion failed");
+        assert_eq!(out_trigger, "115");
+        assert_eq!(out_type, RuleType::LongPress);
+    }
+
+    #[test]
+    fn action_list_macro_roundtrip() {
+        let original = Action::Macro {
+            actions: vec![
+                Action::SendKey { key_code: 1 },
+                Action::SendKey { key_code: 2 },
+            ],
+        };
+
+        let dtos = action_to_dto_list(&original);
+        assert_eq!(dtos.len(), 2);
+
+        let restored = dto_list_to_action(dtos).expect("conversion failed");
+        match restored {
+            Action::Macro { actions } => {
+                assert_eq!(actions.len(), 2);
+                match &actions[0] {
+                    Action::SendKey { key_code } => assert_eq!(*key_code, 1),
+                    _ => panic!("wrong action type"),
+                }
+            }
+            _ => panic!("expected macro"),
+        }
+    }
+
+    #[test]
+    fn action_list_single_unwrap() {
+        let original = Action::SendKey { key_code: 42 };
+        let dtos = action_to_dto_list(&original);
+        assert_eq!(dtos.len(), 1);
+
+        let restored = dto_list_to_action(dtos).expect("conversion failed");
+        match restored {
+            Action::SendKey { key_code } => assert_eq!(key_code, 42),
+            _ => panic!("should unwrap to single action"),
+        }
+    }
 }

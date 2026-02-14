@@ -2,19 +2,20 @@ use anyhow::{Context, Result};
 use clap::Parser;
 use log::{error, info, warn};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
+use std::sync::Arc;
+use parking_lot::Mutex;
 use tokio::sync::RwLock;
 
 mod config;
 mod event;
 mod hardware;
-mod safety;
 mod utils;
 mod webui;
 
 use config::Config;
 use event::EventProcessor;
 use hardware::InputDeviceManager;
+use webui::app_cache::AppCache;
 use webui::learn::LearnState;
 use webui::WebServer;
 
@@ -26,7 +27,11 @@ use webui::WebServer;
 )]
 struct Args {
     /// Config file path
-    #[arg(short, long, default_value = "/data/adb/modules/rust_keymapper/config/config.yaml")]
+    #[arg(
+        short,
+        long,
+        default_value = "/data/adb/modules/rust_keymapper/config/config.yaml"
+    )]
     config: PathBuf,
 
     /// WebUI port
@@ -46,8 +51,9 @@ struct Args {
 async fn main() -> Result<()> {
     let args = Args::parse();
 
-    std::env::set_var("RUST_LOG", &args.log_level);
-    env_logger::init();
+    env_logger::Builder::new()
+        .parse_filters(&args.log_level)
+        .init();
 
     info!("Keymapper Daemon v0.5.0 Starting");
     info!("Config file: {:?}", args.config);
@@ -62,11 +68,12 @@ async fn main() -> Result<()> {
 
     if let Err(e) = config.validate() {
         error!("Config validation failed: {}", e);
-        return Err(e.into());
+        return Err(e);
     }
 
     let config = Arc::new(RwLock::new(config));
     let learn_state = Arc::new(Mutex::new(LearnState::default()));
+    let app_cache = Arc::new(tokio::sync::RwLock::new(AppCache::new()));
 
     let device_path = if let Some(path) = args.device {
         path
@@ -92,16 +99,23 @@ async fn main() -> Result<()> {
     let web_config_path = args.config.clone();
     let web_port = args.webui_port;
     let learn_state_for_web = learn_state.clone();
+    let app_cache_for_web = app_cache.clone();
     tokio::spawn(async move {
-        if let Err(e) =
-            WebServer::run(config_for_web, web_config_path, web_port, learn_state_for_web).await
+        if let Err(e) = WebServer::run(
+            config_for_web,
+            web_config_path,
+            web_port,
+            learn_state_for_web,
+            app_cache_for_web,
+        )
+        .await
         {
             error!("WebUI server failed: {}", e);
         }
     });
 
-    let debug_mode =
-        args.log_level.eq_ignore_ascii_case("debug") || args.log_level.eq_ignore_ascii_case("trace");
+    let debug_mode = args.log_level.eq_ignore_ascii_case("debug")
+        || args.log_level.eq_ignore_ascii_case("trace");
     let mut processor = EventProcessor::new(
         config.clone(),
         args.config.clone(),

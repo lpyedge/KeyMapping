@@ -39,32 +39,60 @@ pub struct Rule {
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum RuleType {
-    Click,             // < 300ms, Release
-    DoubleClick,       // < 300ms interval, 2nd Release
-    ShortPress,        // >= 300ms, Hold
-    LongPress,         // >= 800ms, Hold
-    ComboClick,        // Combination + Click
-    ComboShortPress,   // Combination + Hold >= 300ms
-    ComboLongPress,    // Combination + Hold >= 800ms
+    Click,           // < 300ms, Release
+    DoubleClick,     // < 300ms interval, 2nd Release
+    ShortPress,      // >= 300ms, Hold
+    LongPress,       // >= 800ms, Hold
+    ComboClick,      // Combination + Click
+    ComboShortPress, // Combination + Hold >= 300ms
+    ComboLongPress,  // Combination + Hold >= 800ms
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Action {
-    SendKey { key_code: u16 },
+    SendKey {
+        key_code: u16,
+    },
     #[serde(alias = "run_shell")]
-    Shell { cmd: String },
-    BuiltinCommand { command: BuiltinCommand },
-    MultiTap { codes: Vec<u16>, #[serde(default = "default_tap_interval")] interval_ms: u32 },
-    LaunchApp { package: String, #[serde(default)] activity: Option<String> },
-    LaunchIntent { intent: IntentSpec },
+    Shell {
+        cmd: String,
+    },
+    BuiltinCommand {
+        command: BuiltinCommand,
+    },
+    MultiTap {
+        codes: Vec<u16>,
+        #[serde(default = "default_tap_interval")]
+        interval_ms: u32,
+    },
+    LaunchApp {
+        package: String,
+        #[serde(default)]
+        activity: Option<String>,
+    },
+    LaunchIntent {
+        intent: IntentSpec,
+    },
     ToggleScreen,
-    ToggleRule { rule_id: String },
-    VolumeControl { direction: VolumeDirection },
-    BrightnessControl { direction: BrightnessDirection },
-    Swipe { dx: i32, dy: i32, duration_ms: u32 },
+    ToggleRule {
+        rule_id: String,
+    },
+    VolumeControl {
+        direction: VolumeDirection,
+    },
+    BrightnessControl {
+        direction: BrightnessDirection,
+    },
+    Swipe {
+        dx: i32,
+        dy: i32,
+        duration_ms: u32,
+    },
     Intercept,
-    Macro { actions: Vec<Box<Action>> },
+    Macro {
+        actions: Vec<Action>,
+    },
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -130,14 +158,30 @@ pub struct GlobalSettings {
 }
 
 // Default helpers
-fn default_true() -> bool { true }
-fn default_long_press_threshold() -> u32 { 800 }
-fn default_short_press_threshold() -> u32 { 300 }
-fn default_double_tap_interval() -> u32 { 300 }
-fn default_combination_timeout() -> u32 { 200 }
-fn default_tap_interval() -> u32 { 50 }
-fn default_log_level() -> String { "info".to_string() }
-fn default_rule_timeout() -> u32 { 5000 }
+fn default_true() -> bool {
+    true
+}
+fn default_long_press_threshold() -> u32 {
+    800
+}
+fn default_short_press_threshold() -> u32 {
+    300
+}
+fn default_double_tap_interval() -> u32 {
+    300
+}
+fn default_combination_timeout() -> u32 {
+    200
+}
+fn default_tap_interval() -> u32 {
+    50
+}
+fn default_log_level() -> String {
+    "info".to_string()
+}
+fn default_rule_timeout() -> u32 {
+    5000
+}
 
 impl Default for Config {
     fn default() -> Self {

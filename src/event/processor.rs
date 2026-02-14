@@ -1,14 +1,17 @@
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use anyhow::bail;
 use anyhow::Result;
-use log::{info, warn};
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use log::debug;
+use log::{info, warn};
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex as StdMutex};
+use std::sync::Arc;
+use parking_lot::Mutex as StdMutex;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use std::time::Duration;
-use tokio::sync::RwLock;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use tokio::sync::Mutex;
+use tokio::sync::RwLock;
 
 use crate::config::Config;
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -56,7 +59,11 @@ impl EventProcessor {
 
             let (rules, settings, hw_map) = {
                 let cfg = self.config.read().await;
-                (cfg.rules.clone(), cfg.settings.clone(), cfg.hardware_map.clone())
+                (
+                    cfg.rules.clone(),
+                    cfg.settings.clone(),
+                    cfg.hardware_map.clone(),
+                )
             };
 
             let mut state_machine = StateMachine::new(
@@ -71,10 +78,12 @@ impl EventProcessor {
             let mut device = Device::open(&self.device_path)?;
 
             if let Err(e) = device.grab() {
-                warn!("Failed to grab device: {}. Events will not be intercepted.", e);
-            } else {
-                info!("Device grabbed successfully.");
+                warn!("Failed to grab device: {}.", e);
+                bail!(
+                    "Cannot safely continue without grabbing input device; aborting to avoid duplicate events"
+                );
             }
+            info!("Device grabbed successfully.");
 
             let mut events = device.into_event_stream()?;
             let mut tick = tokio::time::interval(Duration::from_millis(50));
@@ -94,7 +103,7 @@ impl EventProcessor {
                                     let value = event.value(); // 0=UP, 1=DOWN, 2=REPEAT
 
                                     {
-                                        let mut learn_guard = self.learn_state.lock().unwrap();
+                                        let mut learn_guard = self.learn_state.lock();
                                         if learn_guard.consume_event(code, value) {
                                             if self.debug_mode {
                                                 debug!("Learn mode consumed key event code={} value={}", code, value);
@@ -104,20 +113,26 @@ impl EventProcessor {
                                     }
 
                                     if state_machine.is_mapped(code) {
-                                        let actions = state_machine.handle_key(code, value);
-                                        for action in actions {
-                                            ActionExecutor::execute(
-                                                &action,
-                                                uinput.clone(),
-                                                self.config.clone(),
-                                                Some(self.config_path.clone()),
-                                            )
-                                            .await?;
+                                        if value == 2 {
+                                            // Forward key repeat directly (state machine only handles DOWN/UP)
+                                            let mut dev = uinput.lock().await;
+                                            dev.send_key(code, value)?;
+                                        } else {
+                                            let actions = state_machine.handle_key(code, value);
+                                            for action in actions {
+                                                ActionExecutor::execute(
+                                                    &action,
+                                                    uinput.clone(),
+                                                    self.config.clone(),
+                                                    Some(self.config_path.clone()),
+                                                )
+                                                .await?;
+                                            }
                                         }
                                     } else {
+                                        // Forward unmapped key events as-is (no sync here; SYN_REPORT handles it)
                                         let mut dev = uinput.lock().await;
                                         dev.send_key(code, value)?;
-                                        dev.sync()?;
                                     }
                                 } else if event.kind() == InputEventKind::Synchronization(Synchronization::SYN_REPORT) {
                                     uinput.lock().await.sync()?;
@@ -131,7 +146,7 @@ impl EventProcessor {
                     }
                     _ = tick.tick() => {
                         {
-                            let mut learn_guard = self.learn_state.lock().unwrap();
+                            let mut learn_guard = self.learn_state.lock();
                             learn_guard.refresh_timeout();
                         }
 
@@ -160,7 +175,12 @@ impl EventProcessor {
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
         {
-            let _ = (&self.config, &self.config_path, self.debug_mode, &self.learn_state);
+            let _ = (
+                &self.config,
+                &self.config_path,
+                self.debug_mode,
+                &self.learn_state,
+            );
             warn!("Not on Linux/Android, EventProcessor loop is disabled.");
             tokio::time::sleep(tokio::time::Duration::from_secs(3600)).await;
         }

@@ -66,3 +66,15 @@ fabric.properties
 .temp/
 target/
 .cargo/
+
+# Runtime Config (keep default)
+config/config.yaml
+
+# Frontend Build
+dist/
+webui/dist/
+
+# Temp files
+*.tmp
+*.bak
+*.swp

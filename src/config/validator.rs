@@ -83,16 +83,17 @@ impl Config {
                 }
                 _ => {
                     if rule.trigger.contains("->") {
-                        bail!(
-                            "Rule '{}' non-combo type cannot use '->' trigger",
-                            rule.id
-                        );
+                        bail!("Rule '{}' non-combo type cannot use '->' trigger", rule.id);
                     }
                     if rule.trigger.contains('+') {
                         bail!("Rule '{}' non-combo type cannot use '+' trigger", rule.id);
                     }
                     if resolve_token(&rule.trigger).is_none() {
-                        bail!("Rule '{}' has unknown trigger token '{}'", rule.id, rule.trigger);
+                        bail!(
+                            "Rule '{}' has unknown trigger token '{}'",
+                            rule.id,
+                            rule.trigger
+                        );
                     }
                 }
             }

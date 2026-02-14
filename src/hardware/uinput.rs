@@ -4,10 +4,10 @@ use anyhow::Result;
 use anyhow::Context;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 use evdev::{uinput::VirtualDevice, uinput::VirtualDeviceBuilder, AttributeSet, Key};
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use log::info;
 #[cfg(not(any(target_os = "linux", target_os = "android")))]
 use log::debug;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use log::info;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 pub struct UinputHandler {
@@ -22,29 +22,20 @@ impl UinputHandler {
     pub fn new() -> Result<Self> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-        let mut keys = AttributeSet::<Key>::new();
-        // Register common Android keys
-        keys.insert(Key::KEY_POWER);
-        keys.insert(Key::KEY_VOLUMEUP);
-        keys.insert(Key::KEY_VOLUMEDOWN);
-        keys.insert(Key::KEY_CAMERA);
-        keys.insert(Key::KEY_BACK);
-        keys.insert(Key::KEY_HOMEPAGE);
-        keys.insert(Key::KEY_MENU);
-        
-        // Add more keys as needed or iterate 0..255
-        for i in 0..255 {
-             keys.insert(Key::new(i));
-        }
+            let mut keys = AttributeSet::<Key>::new();
+            // Cover Linux input keycode range (0..=767 includes all common keys)
+            for i in 0..=767 {
+                keys.insert(Key::new(i));
+            }
 
-        let device = VirtualDeviceBuilder::new()
-            .name("Rust Keymapper Virtual Device")
-            .with_keys(&keys)
-            .build()
-            .context("Failed to create uinput device")?;
+            let device = VirtualDeviceBuilder::new()
+                .name("Rust Keymapper Virtual Device")
+                .with_keys(&keys)
+                .build()
+                .context("Failed to create uinput device")?;
 
-        info!("Virtual uinput device created");
-        Ok(Self { device })
+            info!("Virtual uinput device created");
+            Ok(Self { device })
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -57,10 +48,10 @@ impl UinputHandler {
     pub fn send_key(&mut self, key_code: u16, value: i32) -> Result<()> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-        let key = Key::new(key_code);
-        let event = evdev::InputEvent::new(evdev::EventType::KEY, key.code(), value);
-        self.device.emit(&[event])?;
-        Ok(())
+            let key = Key::new(key_code);
+            let event = evdev::InputEvent::new(evdev::EventType::KEY, key.code(), value);
+            self.device.emit(&[event])?;
+            Ok(())
         }
 
         #[cfg(not(any(target_os = "linux", target_os = "android")))]
@@ -73,8 +64,9 @@ impl UinputHandler {
     pub fn sync(&mut self) -> Result<()> {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
-        // evdev emit might already sync, but explicit sync if needed
-        // self.device.emit(&[evdev::InputEvent::new(evdev::EventType::SYNCHRONIZATION, 0, 0)])?;
+            use evdev::EventType;
+            let syn = evdev::InputEvent::new(EventType::SYNCHRONIZATION, 0, 0);
+            self.device.emit(&[syn])?;
         }
         Ok(())
     }

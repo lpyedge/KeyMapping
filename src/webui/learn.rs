@@ -3,6 +3,7 @@ use std::time::{Duration, Instant};
 pub const LEARN_TIMEOUT: Duration = Duration::from_secs(3);
 
 #[derive(Clone, Debug, PartialEq)]
+#[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
 pub enum LearnStatus {
     Idle,
     Learning { start: Instant },
@@ -39,6 +40,7 @@ impl LearnState {
         }
     }
 
+    #[cfg_attr(not(any(target_os = "linux", target_os = "android")), allow(dead_code))]
     pub fn consume_event(&mut self, key_code: u16, value: i32) -> bool {
         self.refresh_timeout();
 
@@ -52,13 +54,11 @@ impl LearnState {
                 true
             }
             LearnStatus::Captured { .. } => {
-                if self.consumed_key_up == Some(key_code) {
-                    if value == 0 {
-                        self.consumed_key_up = None;
-                    }
-                    return true;
+                if self.consumed_key_up == Some(key_code) && value == 0 {
+                    self.consumed_key_up = None;
                 }
-                false
+                // Keep intercepting all key events until the UI consumes the captured result.
+                true
             }
             LearnStatus::Idle | LearnStatus::Timeout => false,
         }
@@ -67,7 +67,7 @@ impl LearnState {
     pub fn snapshot(&mut self) -> LearnResultSnapshot {
         self.refresh_timeout();
 
-        match self.status {
+        let result = match self.status {
             LearnStatus::Learning { start } => {
                 let elapsed = start.elapsed();
                 let remaining = LEARN_TIMEOUT.saturating_sub(elapsed).as_millis() as u32;
@@ -80,7 +80,15 @@ impl LearnState {
                 status: self.status.clone(),
                 remaining_ms: None,
             },
+        };
+
+        // Read-once: auto-reset terminal states so keys stop being intercepted
+        if matches!(self.status, LearnStatus::Captured { .. } | LearnStatus::Timeout) {
+            self.status = LearnStatus::Idle;
+            self.consumed_key_up = None;
         }
+
+        result
     }
 }
 
@@ -104,10 +112,13 @@ mod tests {
 
         assert!(matches!(state.status, LearnStatus::Learning { .. }));
         assert!(state.consume_event(116, 1));
-        assert!(matches!(state.status, LearnStatus::Captured { key_code: 116 }));
+        assert!(matches!(
+            state.status,
+            LearnStatus::Captured { key_code: 116 }
+        ));
 
         assert!(state.consume_event(116, 0));
-        assert!(!state.consume_event(115, 0));
+        assert!(state.consume_event(115, 0));
     }
 
     #[test]
