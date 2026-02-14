@@ -2,7 +2,7 @@
   "id": "rust_keymapper",
   "name": "Rust Keymapper",
   "version": "v0.0.1",
-  "versionCode": 6,
+  "versionCode": 7,
   "zipUrl": "https://github.com/lpyedge/KeyMapping/releases/download/v0.0.1/rust_keymapper-0.0.1.zip",
   "zip_url": "https://github.com/lpyedge/KeyMapping/releases/download/v0.0.1/rust_keymapper-0.0.1.zip",
   "downloadUrl": "https://github.com/lpyedge/KeyMapping/releases/download/v0.0.1/rust_keymapper-0.0.1.zip",
