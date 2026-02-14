@@ -153,25 +153,25 @@ jobs:
 
           export VERSION TAG ZIP_NAME ZIP_URL="${zip_url}" CHANGELOG_URL="${changelog_url}" VERSION_CODE="${new_vc}"
           python3 - <<'PY'
-import json
-import os
+          import json
+          import os
 
-data = {
-    "id": "rust_keymapper",
-    "name": "Rust Keymapper",
-    "version": f"v{os.environ['VERSION']}",
-    "versionCode": int(os.environ["VERSION_CODE"]),
-    "zipUrl": os.environ["ZIP_URL"],
-    "zip_url": os.environ["ZIP_URL"],
-    "downloadUrl": os.environ["ZIP_URL"],
-    "download_url": os.environ["ZIP_URL"],
-    "changelog": os.environ["CHANGELOG_URL"],
-}
+          data = {
+              "id": "rust_keymapper",
+              "name": "Rust Keymapper",
+              "version": f"v{os.environ['VERSION']}",
+              "versionCode": int(os.environ["VERSION_CODE"]),
+              "zipUrl": os.environ["ZIP_URL"],
+              "zip_url": os.environ["ZIP_URL"],
+              "downloadUrl": os.environ["ZIP_URL"],
+              "download_url": os.environ["ZIP_URL"],
+              "changelog": os.environ["CHANGELOG_URL"],
+          }
 
-with open("webroot/latest.json", "w", encoding="utf-8") as f:
-    json.dump(data, f, ensure_ascii=False, indent=2)
-    f.write("\n")
-PY
+          with open("webroot/latest.json", "w", encoding="utf-8") as f:
+              json.dump(data, f, ensure_ascii=False, indent=2)
+              f.write("\n")
+          PY
 
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
