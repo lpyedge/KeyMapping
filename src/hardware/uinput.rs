@@ -30,7 +30,7 @@ impl UinputHandler {
 
             let device = VirtualDeviceBuilder::new()?
                 .name("Rust Keymapper Virtual Device")
-                .with_keys(&keys)
+                .with_keys(&keys)?
                 .build()
                 .context("Failed to create uinput device")?;
 
